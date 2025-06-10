@@ -175,55 +175,66 @@ const DriversView = () => {
 
 // --- Bulk Import View ---
 const BulkImportView = () => {
+    const [csvHeaders, setCsvHeaders] = useState([]);
+    const [parsedData, setParsedData] = useState([]);
     const [groupedData, setGroupedData] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [message, setMessage] = useState('');
     const [senderName, setSenderName] = useState('Your Company Name');
+    const [columnMap, setColumnMap] = useState({
+        shipmentNumber: '',
+        receiverName: '',
+        receiverContact: '',
+        itemDescription: '',
+        itemQuantity: 'Qty', // Default Qty as it's often named this
+    });
     
-    // Hardcoded column map based on the user's SOS Inventory file
-    const columnMap = {
-        shipmentNumber: 'Shipment #', // Corrected back to 'Shipment #'
-        receiverName: 'Customer',
-        receiverContact: 'Memo',
-        itemDescription: 'Description',
-        itemQuantity: 'Qty',
-        addr1: 'Shipping Addr 1',
-        addr2: 'Shipping Addr 2',
-        addr3: 'Shipping Addr 3',
-        addr4: 'Shipping Addr 4',
-        addr5: 'Shipping Addr 5',
-    };
+    // This state will hold a map of all address columns selected by the user
+    const [addressColumnMap, setAddressColumnMap] = useState({});
 
     const handleFileChange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        setMessage(''); setGroupedData(null);
+        setMessage(''); setParsedData([]); setCsvHeaders([]); setGroupedData(null);
         
         const reader = new FileReader();
-        reader.onload = (event) => parseAndGroupCSV(event.target.result);
+        reader.onload = (event) => parseCSV(event.target.result);
         reader.readAsText(file);
     };
 
-    const parseAndGroupCSV = (csvText) => {
+    const parseCSV = (csvText) => {
         const lines = csvText.split('\n').filter(line => line.trim() !== '');
         if (lines.length < 2) { setMessage("CSV file is empty or has no data rows."); return; }
-        
         const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.trim().replace(/"/g, ''));
+        setCsvHeaders(headers);
         const data = lines.slice(1).map(line => {
             const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.trim().replace(/"/g, ''));
             let row = {};
             headers.forEach((header, i) => { row[header] = values[i] || ''; });
             return row;
         });
+        setParsedData(data);
+    };
+    
+    const handleMapChange = (e) => {
+        const { name, value } = e.target;
+        setColumnMap(prev => ({...prev, [name]: value}));
+    };
 
-        const shipmentKey = columnMap.shipmentNumber;
-        if(!headers.includes(shipmentKey)) {
-            setMessage(`Error: The required column "${shipmentKey}" was not found in your file. Please ensure your CSV has a '${shipmentKey}' column.`);
+    const handleAddressCheckboxChange = (e) => {
+        const { name, checked } = e.target;
+        setAddressColumnMap(prev => ({...prev, [name]: checked}));
+    };
+    
+    const processAndPreview = () => {
+        if (!columnMap.shipmentNumber) {
+            setMessage("Error: Please map the 'Shipment Number' column to group your deliveries.");
+            setGroupedData(null);
             return;
         }
-
-        const grouped = data.reduce((acc, row) => {
-            const shipmentId = row[shipmentKey];
+        
+        const grouped = parsedData.reduce((acc, row) => {
+            const shipmentId = row[columnMap.shipmentNumber];
             if (!shipmentId) return acc;
             if (!acc[shipmentId]) acc[shipmentId] = [];
             acc[shipmentId].push(row);
@@ -231,15 +242,18 @@ const BulkImportView = () => {
         }, {});
         
         setGroupedData(grouped);
+        setMessage('');
     };
 
     const handleImportJobs = async () => {
-        if (!groupedData) { setMessage("Please upload a file to import."); return; }
+        if (!groupedData) { setMessage("Please preview the data before importing."); return; }
         setIsProcessing(true); setMessage('');
 
         try {
             const batch = writeBatch(db);
             const ordersCollectionRef = collection(db, `artifacts/${appId}/public/data/orders`);
+            
+            const selectedAddressHeaders = Object.keys(addressColumnMap).filter(h => addressColumnMap[h]);
 
             for (const [shipmentNumber, items] of Object.entries(groupedData)) {
                 const newOrderRef = doc(ordersCollectionRef);
@@ -247,22 +261,12 @@ const BulkImportView = () => {
 
                 if (!firstItem) continue; 
                 
-                const addressLines = [
-                    firstItem[columnMap.addr1],
-                    firstItem[columnMap.addr2],
-                    firstItem[columnMap.addr3],
-                    firstItem[columnMap.addr4],
-                    firstItem[columnMap.addr5],
-                ].filter(Boolean); // Filter out empty lines
-                
-                const fullAddress = addressLines.join(', ');
-                const city = addressLines[addressLines.length - 2] || '';
-                const postalCode = addressLines[addressLines.length - 1] || '';
-
+                // Combine all selected address fields in order
+                const fullAddress = selectedAddressHeaders.map(header => firstItem[header]).filter(Boolean).join(', ');
 
                 const description = items.map(item => {
                     const qty = item[columnMap.itemQuantity] || '1';
-                    const desc = item[columnMap.itemDescription] || item['Item'] || 'Item';
+                    const desc = item[columnMap.itemDescription] || item['Description'] || item['Item'] || 'Item';
                     return `${qty}x ${desc}`;
                 }).join('; ');
 
@@ -271,8 +275,8 @@ const BulkImportView = () => {
                     shipmentNumber: shipmentNumber || '',
                     receiverName: firstItem[columnMap.receiverName] || '',
                     receiverAddress: fullAddress,
-                    deliveryTown: city,
-                    receiverPostal: postalCode,
+                    deliveryTown: firstItem['Shipping City'] || '', // Assuming city might exist
+                    receiverPostal: firstItem['Shipping Zip'] || '', // Assuming zip might exist
                     receiverContact: firstItem[columnMap.receiverContact] || '',
                     packageDescription: description || '',
                     status: 'Booked',
@@ -292,6 +296,8 @@ const BulkImportView = () => {
             await batch.commit();
             setMessage(`Successfully imported ${Object.keys(groupedData).length} new jobs!`);
             setGroupedData(null);
+            setParsedData([]);
+            setCsvHeaders([]);
         } catch (err) {
             console.error("Error importing jobs:", err);
             setMessage(`An error occurred during the import process. Firebase error: ${err.message}`);
@@ -305,13 +311,9 @@ const BulkImportView = () => {
             
             <div className="bg-white p-6 rounded-lg shadow space-y-4">
                 <h2 className="text-xl font-bold">Step 1: Upload File & Set Sender</h2>
-                 <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
-                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">Export your shipments from SOS Inventory as a CSV file. The file will be automatically grouped by the **Shipment #** column.</p></div></div>
-                </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
-                        <label className="label">Client / Sender Name for this Import</label>
+                        <label className="label">Client / Sender Name</label>
                         <input type="text" value={senderName} onChange={e => setSenderName(e.target.value)} className="input mt-1" />
                     </div>
                     <div>
@@ -321,9 +323,37 @@ const BulkImportView = () => {
                 </div>
             </div>
 
+            {csvHeaders.length > 0 && (
+                 <div className="bg-white p-6 rounded-lg shadow">
+                    <h2 className="text-xl font-bold mb-4">Step 2: Map Your Columns</h2>
+                    <p className="text-sm text-gray-600 mb-4">Tell us which column from your file corresponds to our required fields.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <MappingSelect label="Shipment Number *" name="shipmentNumber" value={columnMap.shipmentNumber} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Recipient Name *" name="receiverName" value={columnMap.receiverName} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Contact Phone" name="receiverContact" value={columnMap.receiverContact} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Item Description" name="itemDescription" value={columnMap.itemDescription} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Item Quantity" name="itemQuantity" value={columnMap.itemQuantity} onChange={handleMapChange} headers={csvHeaders} />
+                    </div>
+                    <div className="mt-6">
+                         <label className="label">Select all columns that make up the delivery address *</label>
+                         <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 p-4 border rounded-md">
+                             {csvHeaders.map(h => (
+                                 <div key={h} className="flex items-center">
+                                     <input id={`addr-col-${h}`} name={h} type="checkbox" onChange={handleAddressCheckboxChange} className="h-4 w-4 text-blue-600 border-gray-300 rounded" />
+                                     <label htmlFor={`addr-col-${h}`} className="ml-2 block text-sm text-gray-900">{h}</label>
+                                 </div>
+                             ))}
+                         </div>
+                    </div>
+                     <div className="mt-6">
+                        <button onClick={processAndPreview} className="btn-secondary">Preview Grouped Jobs</button>
+                    </div>
+                 </div>
+            )}
+
             {groupedData && (
                 <div className="bg-white p-6 rounded-lg shadow">
-                    <h2 className="text-xl font-bold mb-4">Step 2: Preview & Confirm</h2>
+                    <h2 className="text-xl font-bold mb-4">Step 3: Confirm Import</h2>
                     <p className="text-lg text-gray-700 mb-4">This file will create <span className="font-bold text-blue-600">{Object.keys(groupedData).length}</span> unique delivery jobs.</p>
                     <div className="mt-6">
                         <button onClick={handleImportJobs} disabled={isProcessing} className="w-full btn-primary disabled:bg-blue-300">
@@ -337,6 +367,17 @@ const BulkImportView = () => {
         </div>
     );
 };
+
+
+const MappingSelect = ({label, name, value, onChange, headers}) => (
+    <div>
+        <label className="label">{label}</label>
+        <select name={name} value={value} onChange={onChange} className="select mt-1">
+            <option value="">-- Select a Column --</option>
+            {headers.map(h => <option key={h} value={h}>{h}</option>)}
+        </select>
+    </div>
+);
 
 
 // --- Sub-components (Analytics, Modals, etc.) ---
