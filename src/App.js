@@ -175,20 +175,25 @@ const DriversView = () => {
 
 // --- Bulk Import View ---
 const BulkImportView = () => {
+    const [csvHeaders, setCsvHeaders] = useState([]);
     const [parsedData, setParsedData] = useState([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const [message, setMessage] = useState('');
-    const [senderName, setSenderName] = useState('WCED'); // Default client
+    const [senderName, setSenderName] = useState('WCED');
+    const [columnMap, setColumnMap] = useState({
+        receiverName: '',
+        receiverAddress: '',
+        receiverContact: '',
+        packageDescription: ''
+    });
 
     const handleFileChange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        setMessage(''); setParsedData([]);
-        
+        setMessage(''); setParsedData([]); setCsvHeaders([]);
+
         const reader = new FileReader();
-        reader.onload = (event) => {
-            parseCSV(event.target.result);
-        };
+        reader.onload = (event) => parseCSV(event.target.result);
         reader.readAsText(file);
     };
 
@@ -196,27 +201,28 @@ const BulkImportView = () => {
         const lines = csvText.split('\n').filter(line => line.trim() !== '');
         if (lines.length < 2) { setMessage("CSV file is empty or has no data rows."); return; }
 
-        const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-        // UPDATED required headers based on user's file
-        const requiredHeaders = ['Customer', 'Shipping Address', 'Phone']; 
-        const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
-
-        if (missingHeaders.length > 0) {
-            setMessage(`Error: Missing required columns in CSV. This tool requires: ${requiredHeaders.join(', ')}`);
-            return;
-        }
+        const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.trim().replace(/"/g, ''));
+        setCsvHeaders(headers);
 
         const data = lines.slice(1).map(line => {
             const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.trim().replace(/"/g, ''));
             let row = {};
-            headers.forEach((header, i) => { row[header] = values[i]; });
+            headers.forEach((header, i) => { row[header] = values[i] || ''; });
             return row;
         });
         setParsedData(data);
     };
+    
+    const handleMapChange = (e) => {
+        const { name, value } = e.target;
+        setColumnMap(prev => ({...prev, [name]: value}));
+    };
 
     const handleImportJobs = async () => {
-        if (parsedData.length === 0) { setMessage("No data to import."); return; }
+        if (parsedData.length === 0 || !columnMap.receiverName || !columnMap.receiverAddress) {
+            setMessage("Please upload a file and map at least the 'Recipient Name' and 'Address' columns.");
+            return;
+        }
         setIsProcessing(true); setMessage('');
 
         try {
@@ -225,34 +231,27 @@ const BulkImportView = () => {
 
             parsedData.forEach(row => {
                 const newOrderRef = doc(ordersCollectionRef);
-                
-                // Smartly parse address details
-                const fullAddress = row['Shipping Address'] || '';
+                const fullAddress = row[columnMap.receiverAddress] || '';
                 const addressParts = fullAddress.split(',').map(part => part.trim());
                 const postalCode = addressParts.length > 1 ? addressParts[addressParts.length - 1] : '';
                 const city = addressParts.length > 2 ? addressParts[addressParts.length - 2] : '';
                 
                 const orderData = {
-                    senderName: senderName, 
-                    receiverName: row['Customer'] || 'N/A',
-                    receiverAddress: fullAddress, // Store full address
-                    deliveryTown: city || 'N/A', // Store extracted city
-                    receiverPostal: postalCode || 'N/A', // Store extracted postal code
-                    receiverContact: row['Phone'] || 'N/A',
-                    // Use 'Description' if it exists, otherwise 'Item'
-                    packageDescription: row['Description'] || row['Item'] || '',
-                    status: 'Booked',
-                    createdAt: new Date(),
-                    pickupTown: 'Cape Town Warehouse', 
-                    packageSize: 'medium',
-                    price: 'R0.00' 
+                    senderName: senderName,
+                    receiverName: row[columnMap.receiverName] || 'N/A',
+                    receiverAddress: fullAddress,
+                    deliveryTown: city || 'N/A',
+                    receiverPostal: postalCode || 'N/A',
+                    receiverContact: columnMap.receiverContact ? row[columnMap.receiverContact] : 'N/A',
+                    packageDescription: columnMap.packageDescription ? row[columnMap.packageDescription] : '',
+                    status: 'Booked', createdAt: new Date(), pickupTown: 'Cape Town Warehouse', packageSize: 'medium', price: 'R0.00'
                 };
                 batch.set(newOrderRef, orderData);
             });
 
             await batch.commit();
             setMessage(`Successfully imported ${parsedData.length} new jobs!`);
-            setParsedData([]);
+            setParsedData([]); setCsvHeaders([]);
         } catch (err) {
             console.error("Error importing jobs:", err);
             setMessage("An error occurred during the import process.");
@@ -263,32 +262,35 @@ const BulkImportView = () => {
     return (
         <div className="space-y-6">
             <h1 className="text-3xl font-bold text-gray-900">Bulk Import Shipments</h1>
-            <div className="bg-white p-6 rounded-lg shadow">
-                 <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
-                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">Export your shipments from SOS Inventory as a CSV file. The file must contain the headers: <code className="font-mono bg-blue-100 p-1 rounded">Customer, Shipping Address, Phone</code>. Other columns like <code className="font-mono bg-blue-100 p-1 rounded">Description</code> will also be used if present.</p></div></div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div className="md:col-span-2">
+            <div className="bg-white p-6 rounded-lg shadow space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
                         <label className="label">Client / Sender Name</label>
                         <input type="text" value={senderName} onChange={e => setSenderName(e.target.value)} className="input mt-1" />
                     </div>
                     <div>
-                        <label className="label">Upload CSV File</label>
+                        <label className="label">Upload Shipments CSV File</label>
                         <input type="file" accept=".csv" onChange={handleFileChange} className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
                     </div>
                 </div>
             </div>
 
+            {csvHeaders.length > 0 && (
+                 <div className="bg-white p-6 rounded-lg shadow">
+                    <h2 className="text-xl font-bold mb-4">Step 2: Map Your Columns</h2>
+                    <p className="text-sm text-gray-600 mb-4">Tell us which column from your file corresponds to our required fields.</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <MappingSelect label="Recipient Name *" name="receiverName" value={columnMap.receiverName} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Full Address *" name="receiverAddress" value={columnMap.receiverAddress} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Contact Phone" name="receiverContact" value={columnMap.receiverContact} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Notes / Description" name="packageDescription" value={columnMap.packageDescription} onChange={handleMapChange} headers={csvHeaders} />
+                    </div>
+                 </div>
+            )}
+
             {parsedData.length > 0 && (
                 <div className="bg-white p-6 rounded-lg shadow">
-                    <h2 className="text-xl font-bold mb-4">Preview Data ({parsedData.length} rows)</h2>
-                    <div className="overflow-x-auto max-h-64">
-                         <table className="min-w-full text-sm">
-                            <thead className="bg-gray-50"><tr>{Object.keys(parsedData[0]).map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
-                            <tbody className="divide-y">{parsedData.slice(0, 5).map((row, i) => (<tr key={i}>{Object.values(row).map((val, j) => <td key={j} className="td truncate" title={val}>{val}</td>)}</tr>))}</tbody>
-                        </table>
-                    </div>
+                    <h2 className="text-xl font-bold mb-4">Step 3: Preview & Confirm</h2>
                     <div className="mt-6">
                         <button onClick={handleImportJobs} disabled={isProcessing} className="w-full btn-primary disabled:bg-blue-300">
                             {isProcessing ? 'Importing...' : `Confirm & Create ${parsedData.length} Jobs`}
@@ -298,10 +300,20 @@ const BulkImportView = () => {
             )}
             
             {message && <div className={`mt-4 p-4 rounded-md ${message.startsWith('Error') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{message}</div>}
-
         </div>
     );
 };
+
+const MappingSelect = ({label, name, value, onChange, headers}) => (
+    <div>
+        <label className="label">{label}</label>
+        <select name={name} value={value} onChange={onChange} className="select mt-1">
+            <option value="">-- Select a Column --</option>
+            {headers.map(h => <option key={h} value={h}>{h}</option>)}
+        </select>
+    </div>
+);
+
 
 // --- Sub-components (Analytics, Modals, etc.) ---
 const AnalyticsDashboard = ({ allOrders }) => { const stats = useMemo(() => { const today = new Date().toDateString(); const todaysOrders = allOrders.filter(o => o.createdAt && new Date(o.createdAt.seconds * 1000).toDateString() === today); const revenueToday = todaysOrders.reduce((acc, order) => acc + (parseFloat(order.price?.replace('R', '')) || 0), 0); const pendingJobs = allOrders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled').length; return { ordersToday: todaysOrders.length, revenueToday: revenueToday.toFixed(2), pendingJobs }; }, [allOrders]); return (<div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"><AnalyticsCard title="Orders Today" value={stats.ordersToday} /><AnalyticsCard title="Revenue Today" value={`R ${stats.revenueToday}`} /><AnalyticsCard title="Pending Jobs" value={stats.pendingJobs} /></div>); };
