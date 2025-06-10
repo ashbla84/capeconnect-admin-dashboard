@@ -128,8 +128,8 @@ const OrdersView = () => {
                 </div>
                 <div className="bg-white rounded-lg shadow overflow-x-auto">
                    <table className="min-w-full divide-y divide-gray-200">
-                       <thead className="bg-gray-50"><tr><th className="th">Date</th><th className="th">Route</th><th className="th">Assigned Driver</th><th className="th">Status</th><th className="relative px-6 py-3"></th></tr></thead>
-                       <tbody className="bg-white divide-y divide-gray-200">{filteredOrders.map(order => (<tr key={order.id}><td className="td">{order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000).toLocaleDateString() : 'N/A'}</td><td className="td font-medium">{order.pickupTown || 'N/A'} → {order.deliveryTown}</td><td className="td">{order.assignedDriverName || 'Unassigned'}</td><td className="td"><StatusBadge status={order.status} /></td><td className="td text-right"><button onClick={() => setSelectedOrder(order)} className="text-blue-600 hover:text-blue-900">Manage</button></td></tr>))}</tbody>
+                       <thead className="bg-gray-50"><tr><th className="th">Date</th><th className="th">PO Number</th><th className="th">Customer</th><th className="th">Assigned Driver</th><th className="th">Status</th><th className="relative px-6 py-3"></th></tr></thead>
+                       <tbody className="bg-white divide-y divide-gray-200">{filteredOrders.map(order => (<tr key={order.id}><td className="td">{order.createdAt?.seconds ? new Date(order.createdAt.seconds * 1000).toLocaleDateString() : 'N/A'}</td><td className="td font-medium">{order.poNumber || 'N/A'}</td><td className="td">{order.receiverName}</td><td className="td">{order.assignedDriverName || 'Unassigned'}</td><td className="td"><StatusBadge status={order.status} /></td><td className="td text-right"><button onClick={() => setSelectedOrder(order)} className="text-blue-600 hover:text-blue-900">Manage</button></td></tr>))}</tbody>
                    </table>
                 </div>
             </div>
@@ -177,21 +177,23 @@ const DriversView = () => {
 const BulkImportView = () => {
     const [csvHeaders, setCsvHeaders] = useState([]);
     const [parsedData, setParsedData] = useState([]);
+    const [groupedData, setGroupedData] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [message, setMessage] = useState('');
     const [senderName, setSenderName] = useState('WCED');
     const [columnMap, setColumnMap] = useState({
+        poNumber: '',
         receiverName: '',
         receiverAddress: '',
         receiverContact: '',
-        packageDescription: ''
+        itemDescription: '',
+        itemQuantity: ''
     });
 
     const handleFileChange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-        setMessage(''); setParsedData([]); setCsvHeaders([]);
-
+        setMessage(''); setParsedData([]); setCsvHeaders([]); setGroupedData(null);
         const reader = new FileReader();
         reader.onload = (event) => parseCSV(event.target.result);
         reader.readAsText(file);
@@ -200,10 +202,8 @@ const BulkImportView = () => {
     const parseCSV = (csvText) => {
         const lines = csvText.split('\n').filter(line => line.trim() !== '');
         if (lines.length < 2) { setMessage("CSV file is empty or has no data rows."); return; }
-
         const headers = lines[0].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(h => h.trim().replace(/"/g, ''));
         setCsvHeaders(headers);
-
         const data = lines.slice(1).map(line => {
             const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.trim().replace(/"/g, ''));
             let row = {};
@@ -217,41 +217,64 @@ const BulkImportView = () => {
         const { name, value } = e.target;
         setColumnMap(prev => ({...prev, [name]: value}));
     };
-
-    const handleImportJobs = async () => {
-        if (parsedData.length === 0 || !columnMap.receiverName || !columnMap.receiverAddress) {
-            setMessage("Please upload a file and map at least the 'Recipient Name' and 'Address' columns.");
+    
+    const processAndPreview = () => {
+        if (!columnMap.poNumber) {
+            setMessage("Error: Please map the 'PO Number' column to group your deliveries.");
+            setGroupedData(null);
             return;
         }
+        
+        const grouped = parsedData.reduce((acc, row) => {
+            const po = row[columnMap.poNumber];
+            if (!po) return acc;
+            if (!acc[po]) acc[po] = [];
+            acc[po].push(row);
+            return acc;
+        }, {});
+        
+        setGroupedData(grouped);
+        setMessage('');
+    };
+
+    const handleImportJobs = async () => {
+        if (!groupedData) { setMessage("Please preview the data before importing."); return; }
         setIsProcessing(true); setMessage('');
 
         try {
             const batch = writeBatch(db);
             const ordersCollectionRef = collection(db, `artifacts/${appId}/public/data/orders`);
 
-            parsedData.forEach(row => {
+            Object.entries(groupedData).forEach(([poNumber, items]) => {
                 const newOrderRef = doc(ordersCollectionRef);
-                const fullAddress = row[columnMap.receiverAddress] || '';
+                const firstItem = items[0];
+                const fullAddress = firstItem[columnMap.receiverAddress] || '';
                 const addressParts = fullAddress.split(',').map(part => part.trim());
                 const postalCode = addressParts.length > 1 ? addressParts[addressParts.length - 1] : '';
                 const city = addressParts.length > 2 ? addressParts[addressParts.length - 2] : '';
-                
+
+                const description = items.map(item => {
+                    const qty = columnMap.itemQuantity ? item[columnMap.itemQuantity] : '1';
+                    const desc = columnMap.itemDescription ? item[columnMap.itemDescription] : item['Item'] || 'Item';
+                    return `${qty}x ${desc}`;
+                }).join('; ');
+
                 const orderData = {
-                    senderName: senderName,
-                    receiverName: row[columnMap.receiverName] || 'N/A',
+                    senderName, poNumber,
+                    receiverName: firstItem[columnMap.receiverName] || 'N/A',
                     receiverAddress: fullAddress,
                     deliveryTown: city || 'N/A',
                     receiverPostal: postalCode || 'N/A',
-                    receiverContact: columnMap.receiverContact ? row[columnMap.receiverContact] : 'N/A',
-                    packageDescription: columnMap.packageDescription ? row[columnMap.packageDescription] : '',
-                    status: 'Booked', createdAt: new Date(), pickupTown: 'Cape Town Warehouse', packageSize: 'medium', price: 'R0.00'
+                    receiverContact: columnMap.receiverContact ? firstItem[columnMap.receiverContact] : 'N/A',
+                    packageDescription: description,
+                    status: 'Booked', createdAt: new Date(), pickupTown: 'Warehouse', packageSize: 'multiple', price: 'R0.00'
                 };
                 batch.set(newOrderRef, orderData);
             });
 
             await batch.commit();
-            setMessage(`Successfully imported ${parsedData.length} new jobs!`);
-            setParsedData([]); setCsvHeaders([]);
+            setMessage(`Successfully imported ${Object.keys(groupedData).length} new jobs!`);
+            setParsedData([]); setCsvHeaders([]); setGroupedData(null);
         } catch (err) {
             console.error("Error importing jobs:", err);
             setMessage("An error occurred during the import process.");
@@ -262,38 +285,37 @@ const BulkImportView = () => {
     return (
         <div className="space-y-6">
             <h1 className="text-3xl font-bold text-gray-900">Bulk Import Shipments</h1>
+            
             <div className="bg-white p-6 rounded-lg shadow space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <label className="label">Client / Sender Name</label>
-                        <input type="text" value={senderName} onChange={e => setSenderName(e.target.value)} className="input mt-1" />
-                    </div>
-                    <div>
-                        <label className="label">Upload Shipments CSV File</label>
-                        <input type="file" accept=".csv" onChange={handleFileChange} className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
-                    </div>
-                </div>
+                <h2 className="text-xl font-bold">Step 1: Upload File</h2>
+                <input type="file" accept=".csv" onChange={handleFileChange} className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
             </div>
 
             {csvHeaders.length > 0 && (
                  <div className="bg-white p-6 rounded-lg shadow">
                     <h2 className="text-xl font-bold mb-4">Step 2: Map Your Columns</h2>
-                    <p className="text-sm text-gray-600 mb-4">Tell us which column from your file corresponds to our required fields.</p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <p className="text-sm text-gray-600 mb-4">Tell us which column from your file corresponds to our required fields. **PO Number is required for grouping.**</p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <MappingSelect label="PO Number *" name="poNumber" value={columnMap.poNumber} onChange={handleMapChange} headers={csvHeaders} />
                         <MappingSelect label="Recipient Name *" name="receiverName" value={columnMap.receiverName} onChange={handleMapChange} headers={csvHeaders} />
                         <MappingSelect label="Full Address *" name="receiverAddress" value={columnMap.receiverAddress} onChange={handleMapChange} headers={csvHeaders} />
                         <MappingSelect label="Contact Phone" name="receiverContact" value={columnMap.receiverContact} onChange={handleMapChange} headers={csvHeaders} />
-                        <MappingSelect label="Notes / Description" name="packageDescription" value={columnMap.packageDescription} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Item Description" name="itemDescription" value={columnMap.itemDescription} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Item Quantity" name="itemQuantity" value={columnMap.itemQuantity} onChange={handleMapChange} headers={csvHeaders} />
+                    </div>
+                    <div className="mt-6">
+                        <button onClick={processAndPreview} className="btn-secondary">Preview Grouped Jobs</button>
                     </div>
                  </div>
             )}
 
-            {parsedData.length > 0 && (
+            {groupedData && (
                 <div className="bg-white p-6 rounded-lg shadow">
-                    <h2 className="text-xl font-bold mb-4">Step 3: Preview & Confirm</h2>
+                    <h2 className="text-xl font-bold mb-4">Step 3: Confirm Import</h2>
+                    <p className="text-lg text-gray-700 mb-4">This file will create <span className="font-bold text-blue-600">{Object.keys(groupedData).length}</span> unique delivery jobs.</p>
                     <div className="mt-6">
                         <button onClick={handleImportJobs} disabled={isProcessing} className="w-full btn-primary disabled:bg-blue-300">
-                            {isProcessing ? 'Importing...' : `Confirm & Create ${parsedData.length} Jobs`}
+                            {isProcessing ? 'Importing...' : `Confirm & Create ${Object.keys(groupedData).length} Jobs`}
                         </button>
                     </div>
                 </div>
@@ -303,6 +325,7 @@ const BulkImportView = () => {
         </div>
     );
 };
+
 
 const MappingSelect = ({label, name, value, onChange, headers}) => (
     <div>
@@ -319,7 +342,7 @@ const MappingSelect = ({label, name, value, onChange, headers}) => (
 const AnalyticsDashboard = ({ allOrders }) => { const stats = useMemo(() => { const today = new Date().toDateString(); const todaysOrders = allOrders.filter(o => o.createdAt && new Date(o.createdAt.seconds * 1000).toDateString() === today); const revenueToday = todaysOrders.reduce((acc, order) => acc + (parseFloat(order.price?.replace('R', '')) || 0), 0); const pendingJobs = allOrders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled').length; return { ordersToday: todaysOrders.length, revenueToday: revenueToday.toFixed(2), pendingJobs }; }, [allOrders]); return (<div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"><AnalyticsCard title="Orders Today" value={stats.ordersToday} /><AnalyticsCard title="Revenue Today" value={`R ${stats.revenueToday}`} /><AnalyticsCard title="Pending Jobs" value={stats.pendingJobs} /></div>); };
 const AnalyticsCard = ({ title, value }) => <div className="bg-white p-6 rounded-lg shadow"><h3 className="text-sm font-medium text-gray-500 truncate">{title}</h3><p className="mt-1 text-3xl font-semibold text-gray-900">{value}</p></div>;
 const AddDriverModal = ({ onClose, onAddDriver }) => { const [name, setName] = useState(''); const [contact, setContact] = useState(''); const [vehicleReg, setVehicleReg] = useState(''); const handleSubmit = (e) => { e.preventDefault(); if (!name || !contact || !vehicleReg) return; onAddDriver({ name, contact, vehicleReg }); }; return (<div className="modal-backdrop"><div className="modal-content"><form onSubmit={handleSubmit}><div className="p-6"><h2 className="text-2xl font-bold mb-4">Add New Driver</h2><div className="space-y-4"><input value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="input" required /><input value={contact} onChange={e => setContact(e.target.value)} placeholder="Contact Number" className="input" required /><input value={vehicleReg} onChange={e => setVehicleReg(e.target.value)} placeholder="Vehicle Registration" className="input" required /></div></div><div className="modal-footer"><button type="button" onClick={onClose} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Add Driver</button></div></form></div></div>); }
-const OrderDetailsModal = ({ order, onClose, onUpdateOrder }) => { const [newStatus, setNewStatus] = useState(order.status); const [assignedDriverId, setAssignedDriverId] = useState(order.assignedDriverId || ''); const [drivers, setDrivers] = useState([]); useEffect(() => { if (!db) return; const unsub = onSnapshot(collection(db, `artifacts/${appId}/public/data/drivers`), (snap) => setDrivers(snap.docs.map(d => ({ id: d.id, ...d.data() })))); return unsub; }, []); const handleSave = () => { const driver = drivers.find(d => d.id === assignedDriverId); onUpdateOrder(order.id, { status: newStatus, assignedDriverId: assignedDriverId || null, assignedDriverName: driver ? driver.name : null, }); onClose(); }; return (<div className="modal-backdrop"><div className="modal-content max-w-3xl"><div className="p-6 border-b flex justify-between items-start"><div><h2 className="text-2xl font-bold">Manage Order</h2><p className="text-sm text-gray-500">ID: {order.id}</p></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button></div><div className="p-6 max-h-[60vh] overflow-y-auto grid md:grid-cols-2 gap-x-8 gap-y-6"><div className="md:col-span-2 space-y-4"><h3 className="section-title">Logistics</h3><DetailItem label="Price" value={order.price} /><DetailItem label="Pickup Time" value={order.pickupTime} /><DetailItem label="Instructions" value={order.packageDescription || 'N/A'} /></div><div><h3 className="section-title">Sender</h3><DetailItem label="Name" value={order.senderName} /><DetailItem label="Contact" value={order.senderContact} /><DetailItem label="Address" value={`${order.senderAddress || ''}, ${order.pickupTown || ''}, ${order.senderPostal || ''}`} /></div><div><h3 className="section-title">Recipient</h3><DetailItem label="Name" value={order.receiverName} /><DetailItem label="Contact" value={order.receiverContact} /><DetailItem label="Address" value={`${order.receiverAddress}, ${order.deliveryTown}, ${order.receiverPostal}`} /></div></div><div className="modal-footer flex-col sm:flex-row"><div className="grid sm:grid-cols-2 gap-4 w-full"><div><label className="label">Assign Driver</label><select value={assignedDriverId} onChange={e => setAssignedDriverId(e.target.value)} className="select"><option value="">Unassigned</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div><div><label className="label">Update Status</label><select value={newStatus} onChange={e => setNewStatus(e.target.value)} className="select">{['Booked', 'Driver Assigned', 'Collected', 'In Transit', 'Completed', 'Cancelled'].map(s => <option key={s} value={s}>{s}</option>)}</select></div></div><div className="flex gap-4 w-full sm:w-auto mt-4 sm:mt-0 self-end"><button onClick={handleSave} className="btn-primary w-full sm:w-auto">Save Changes</button></div></div></div></div>); };
+const OrderDetailsModal = ({ order, onClose, onUpdateOrder }) => { const [newStatus, setNewStatus] = useState(order.status); const [assignedDriverId, setAssignedDriverId] = useState(order.assignedDriverId || ''); const [drivers, setDrivers] = useState([]); useEffect(() => { if (!db) return; const unsub = onSnapshot(collection(db, `artifacts/${appId}/public/data/drivers`), (snap) => setDrivers(snap.docs.map(d => ({ id: d.id, ...d.data() })))); return unsub; }, []); const handleSave = () => { const driver = drivers.find(d => d.id === assignedDriverId); onUpdateOrder(order.id, { status: newStatus, assignedDriverId: assignedDriverId || null, assignedDriverName: driver ? driver.name : null, }); onClose(); }; return (<div className="modal-backdrop"><div className="modal-content max-w-3xl"><div className="p-6 border-b flex justify-between items-start"><div><h2 className="text-2xl font-bold">Manage Order</h2><p className="text-sm text-gray-500">ID: {order.id}</p></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button></div><div className="p-6 max-h-[60vh] overflow-y-auto grid md:grid-cols-2 gap-x-8 gap-y-6"><div className="md:col-span-2 space-y-4"><h3 className="section-title">Logistics</h3><DetailItem label="PO Number" value={order.poNumber} /><DetailItem label="Price" value={order.price} /><DetailItem label="Pickup Time" value={order.pickupTime} /><DetailItem label="Instructions" value={order.packageDescription || 'N/A'} /></div><div><h3 className="section-title">Sender</h3><DetailItem label="Name" value={order.senderName} /><DetailItem label="Contact" value={order.senderContact} /><DetailItem label="Address" value={`${order.senderAddress || ''}, ${order.pickupTown || ''}, ${order.senderPostal || ''}`} /></div><div><h3 className="section-title">Recipient</h3><DetailItem label="Name" value={order.receiverName} /><DetailItem label="Contact" value={order.receiverContact} /><DetailItem label="Address" value={`${order.receiverAddress}, ${order.deliveryTown}, ${order.receiverPostal}`} /></div></div><div className="modal-footer flex-col sm:flex-row"><div className="grid sm:grid-cols-2 gap-4 w-full"><div><label className="label">Assign Driver</label><select value={assignedDriverId} onChange={e => setAssignedDriverId(e.target.value)} className="select"><option value="">Unassigned</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div><div><label className="label">Update Status</label><select value={newStatus} onChange={e => setNewStatus(e.target.value)} className="select">{['Booked', 'Driver Assigned', 'Collected', 'In Transit', 'Completed', 'Cancelled'].map(s => <option key={s} value={s}>{s}</option>)}</select></div></div><div className="flex gap-4 w-full sm:w-auto mt-4 sm:mt-0 self-end"><button onClick={handleSave} className="btn-primary w-full sm:w-auto">Save Changes</button></div></div></div></div>); };
 const DetailItem = ({ label, value }) => <div><p className="text-sm font-medium text-gray-500">{label}</p><p className="text-base text-gray-900">{value}</p></div>;
 const StatusBadge = ({ status }) => { const classes = { 'Booked': 'bg-blue-100 text-blue-800', 'Driver Assigned': 'bg-yellow-100 text-yellow-800', 'Collected': 'bg-purple-100 text-purple-800', 'In Transit': 'bg-indigo-100 text-indigo-800', 'Completed': 'bg-green-100 text-green-800', 'Cancelled': 'bg-red-100 text-red-800', }; return <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${classes[status] || 'bg-gray-100 text-gray-800'}`}>{status}</span>; };
 
