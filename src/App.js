@@ -1,13 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { initializeApp } from 'firebase/app';
+// Corrected: Combined Firebase imports to prevent duplication
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, query, doc, updateDoc, addDoc, writeBatch } from 'firebase/firestore';
-
-// --- Helper: Get global variables from the environment ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-const GOOGLE_MAPS_API_KEY = ""; // Kept for future map integration
 
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
@@ -18,18 +12,22 @@ import { getAnalytics } from "firebase/analytics";
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyBIiZ6QiFrbwrWz5At-Fe3TP3O1L50fcyc",
-  authDomain: "capeconnect-couriers.firebaseapp.com",
-  projectId: "capeconnect-couriers",
-  storageBucket: "capeconnect-couriers.firebasestorage.app",
-  messagingSenderId: "502510444401",
-  appId: "1:502510444401:web:4bd0c7a32a5a6e5755a0d0",
-  measurementId: "G-WKS50XJ838"
+  apiKey: "AIzaSyBIiZ6QiFrbwrWz5At-Fe3TP3O1L50fcyc",
+  authDomain: "capeconnect-couriers.firebaseapp.com",
+  projectId: "capeconnect-couriers",
+  storageBucket: "capeconnect-couriers.appspot.com",
+  messagingSenderId: "502510444401",
+  appId: "1:502510444401:web:4bd0c7a32a5a6e5755a0d0",
+  measurementId: "G-WKS50XJ838"
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const analytics = getAnalytics(app);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = 'capeconnect-couriers'; // Manually set appId based on project ID
+const initialAuthToken = null; // Assuming no initial token in this setup
 
 // --- SVG Icons ---
 const Logo = () => (
@@ -92,7 +90,7 @@ const TabButton = ({ text, isActive, onClick }) => (
 );
 
 // --- Orders View ---
-const OrdersView = () => { /* This component code is unchanged */
+const OrdersView = () => { 
     const [allOrders, setAllOrders] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState('');
@@ -146,7 +144,7 @@ const OrdersView = () => { /* This component code is unchanged */
 };
 
 // --- Drivers View ---
-const DriversView = () => { /* This component code is unchanged */
+const DriversView = () => { 
     const [drivers, setDrivers] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState('');
@@ -234,7 +232,7 @@ const BulkImportView = () => {
             parsedData.forEach(row => {
                 const newOrderRef = doc(ordersCollectionRef);
                 const orderData = {
-                    senderName: senderName, // Set sender from input field
+                    senderName: senderName, 
                     receiverName: row['Customer'] || 'N/A',
                     receiverAddress: row['Shipping Address'] || 'N/A',
                     deliveryTown: row['Shipping City'] || 'N/A',
@@ -243,10 +241,9 @@ const BulkImportView = () => {
                     packageDescription: row['Notes'] || '',
                     status: 'Booked',
                     createdAt: new Date(),
-                    // other fields can be set to default
-                    pickupTown: 'Cape Town Warehouse', // Example default
+                    pickupTown: 'Cape Town Warehouse', 
                     packageSize: 'medium',
-                    price: 'R0.00' // price might need to be calculated later
+                    price: 'R0.00' 
                 };
                 batch.set(newOrderRef, orderData);
             });
@@ -304,11 +301,11 @@ const BulkImportView = () => {
     );
 };
 
-// --- Sub-components (Analytics, Modals, etc.) are unchanged below ---
-const AnalyticsDashboard = ({ allOrders }) => { const stats = useMemo(() => { const today = new Date().toDateString(); const todaysOrders = allOrders.filter(o => new Date(o.createdAt.seconds * 1000).toDateString() === today); const revenueToday = todaysOrders.reduce((acc, order) => acc + (parseFloat(order.price?.replace('R', '')) || 0), 0); const pendingJobs = allOrders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled').length; return { ordersToday: todaysOrders.length, revenueToday: revenueToday.toFixed(2), pendingJobs }; }, [allOrders]); return (<div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"><AnalyticsCard title="Orders Today" value={stats.ordersToday} /><AnalyticsCard title="Revenue Today" value={`R ${stats.revenueToday}`} /><AnalyticsCard title="Pending Jobs" value={stats.pendingJobs} /></div>); };
+// --- Sub-components (Analytics, Modals, etc.) ---
+const AnalyticsDashboard = ({ allOrders }) => { const stats = useMemo(() => { const today = new Date().toDateString(); const todaysOrders = allOrders.filter(o => o.createdAt && new Date(o.createdAt.seconds * 1000).toDateString() === today); const revenueToday = todaysOrders.reduce((acc, order) => acc + (parseFloat(order.price?.replace('R', '')) || 0), 0); const pendingJobs = allOrders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled').length; return { ordersToday: todaysOrders.length, revenueToday: revenueToday.toFixed(2), pendingJobs }; }, [allOrders]); return (<div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"><AnalyticsCard title="Orders Today" value={stats.ordersToday} /><AnalyticsCard title="Revenue Today" value={`R ${stats.revenueToday}`} /><AnalyticsCard title="Pending Jobs" value={stats.pendingJobs} /></div>); };
 const AnalyticsCard = ({ title, value }) => <div className="bg-white p-6 rounded-lg shadow"><h3 className="text-sm font-medium text-gray-500 truncate">{title}</h3><p className="mt-1 text-3xl font-semibold text-gray-900">{value}</p></div>;
 const AddDriverModal = ({ onClose, onAddDriver }) => { const [name, setName] = useState(''); const [contact, setContact] = useState(''); const [vehicleReg, setVehicleReg] = useState(''); const handleSubmit = (e) => { e.preventDefault(); if (!name || !contact || !vehicleReg) return; onAddDriver({ name, contact, vehicleReg }); }; return (<div className="modal-backdrop"><div className="modal-content"><form onSubmit={handleSubmit}><div className="p-6"><h2 className="text-2xl font-bold mb-4">Add New Driver</h2><div className="space-y-4"><input value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="input" required /><input value={contact} onChange={e => setContact(e.target.value)} placeholder="Contact Number" className="input" required /><input value={vehicleReg} onChange={e => setVehicleReg(e.target.value)} placeholder="Vehicle Registration" className="input" required /></div></div><div className="modal-footer"><button type="button" onClick={onClose} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Add Driver</button></div></form></div></div>); }
-const OrderDetailsModal = ({ order, onClose, onUpdateOrder }) => { const [newStatus, setNewStatus] = useState(order.status); const [assignedDriverId, setAssignedDriverId] = useState(order.assignedDriverId || ''); const [drivers, setDrivers] = useState([]); useEffect(() => { if (!db) return; const unsub = onSnapshot(collection(db, `artifacts/${appId}/public/data/drivers`), (snap) => setDrivers(snap.docs.map(d => ({ id: d.id, ...d.data() })))); return unsub; }, []); const handleSave = () => { const driver = drivers.find(d => d.id === assignedDriverId); onUpdateOrder(order.id, { status: newStatus, assignedDriverId: assignedDriverId || null, assignedDriverName: driver ? driver.name : null, }); onClose(); }; return (<div className="modal-backdrop"><div className="modal-content max-w-3xl"><div className="p-6 border-b flex justify-between items-start"><div><h2 className="text-2xl font-bold">Manage Order</h2><p className="text-sm text-gray-500">ID: {order.id}</p></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button></div><div className="p-6 max-h-[60vh] overflow-y-auto grid md:grid-cols-2 gap-x-8 gap-y-6"><div className="md:col-span-2 space-y-4"><h3 className="section-title">Logistics</h3><DetailItem label="Price" value={order.price} /><DetailItem label="Pickup Time" value={order.pickupTime} /><DetailItem label="Instructions" value={order.packageDescription || 'N/A'} /></div><div><h3 className="section-title">Sender</h3><DetailItem label="Name" value={order.senderName} /><DetailItem label="Contact" value={order.senderContact} /><DetailItem label="Address" value={`${order.senderAddress}, ${order.pickupTown}, ${order.senderPostal}`} /></div><div><h3 className="section-title">Recipient</h3><DetailItem label="Name" value={order.receiverName} /><DetailItem label="Contact" value={order.receiverContact} /><DetailItem label="Address" value={`${order.receiverAddress}, ${order.deliveryTown}, ${order.receiverPostal}`} /></div></div><div className="modal-footer flex-col sm:flex-row"><div className="grid sm:grid-cols-2 gap-4 w-full"><div><label className="label">Assign Driver</label><select value={assignedDriverId} onChange={e => setAssignedDriverId(e.target.value)} className="select"><option value="">Unassigned</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div><div><label className="label">Update Status</label><select value={newStatus} onChange={e => setNewStatus(e.target.value)} className="select">{['Booked', 'Driver Assigned', 'Collected', 'In Transit', 'Completed', 'Cancelled'].map(s => <option key={s} value={s}>{s}</option>)}</select></div></div><div className="flex gap-4 w-full sm:w-auto mt-4 sm:mt-0 self-end"><button onClick={handleSave} className="btn-primary w-full sm:w-auto">Save Changes</button></div></div></div></div>); };
+const OrderDetailsModal = ({ order, onClose, onUpdateOrder }) => { const [newStatus, setNewStatus] = useState(order.status); const [assignedDriverId, setAssignedDriverId] = useState(order.assignedDriverId || ''); const [drivers, setDrivers] = useState([]); useEffect(() => { if (!db) return; const unsub = onSnapshot(collection(db, `artifacts/${appId}/public/data/drivers`), (snap) => setDrivers(snap.docs.map(d => ({ id: d.id, ...d.data() })))); return unsub; }, []); const handleSave = () => { const driver = drivers.find(d => d.id === assignedDriverId); onUpdateOrder(order.id, { status: newStatus, assignedDriverId: assignedDriverId || null, assignedDriverName: driver ? driver.name : null, }); onClose(); }; return (<div className="modal-backdrop"><div className="modal-content max-w-3xl"><div className="p-6 border-b flex justify-between items-start"><div><h2 className="text-2xl font-bold">Manage Order</h2><p className="text-sm text-gray-500">ID: {order.id}</p></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button></div><div className="p-6 max-h-[60vh] overflow-y-auto grid md:grid-cols-2 gap-x-8 gap-y-6"><div className="md:col-span-2 space-y-4"><h3 className="section-title">Logistics</h3><DetailItem label="Price" value={order.price} /><DetailItem label="Pickup Time" value={order.pickupTime} /><DetailItem label="Instructions" value={order.packageDescription || 'N/A'} /></div><div><h3 className="section-title">Sender</h3><DetailItem label="Name" value={order.senderName} /><DetailItem label="Contact" value={order.senderContact} /><DetailItem label="Address" value={`${order.senderAddress || ''}, ${order.pickupTown || ''}, ${order.senderPostal || ''}`} /></div><div><h3 className="section-title">Recipient</h3><DetailItem label="Name" value={order.receiverName} /><DetailItem label="Contact" value={order.receiverContact} /><DetailItem label="Address" value={`${order.receiverAddress}, ${order.deliveryTown}, ${order.receiverPostal}`} /></div></div><div className="modal-footer flex-col sm:flex-row"><div className="grid sm:grid-cols-2 gap-4 w-full"><div><label className="label">Assign Driver</label><select value={assignedDriverId} onChange={e => setAssignedDriverId(e.target.value)} className="select"><option value="">Unassigned</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div><div><label className="label">Update Status</label><select value={newStatus} onChange={e => setNewStatus(e.target.value)} className="select">{['Booked', 'Driver Assigned', 'Collected', 'In Transit', 'Completed', 'Cancelled'].map(s => <option key={s} value={s}>{s}</option>)}</select></div></div><div className="flex gap-4 w-full sm:w-auto mt-4 sm:mt-0 self-end"><button onClick={handleSave} className="btn-primary w-full sm:w-auto">Save Changes</button></div></div></div></div>); };
 const DetailItem = ({ label, value }) => <div><p className="text-sm font-medium text-gray-500">{label}</p><p className="text-base text-gray-900">{value}</p></div>;
 const StatusBadge = ({ status }) => { const classes = { 'Booked': 'bg-blue-100 text-blue-800', 'Driver Assigned': 'bg-yellow-100 text-yellow-800', 'Collected': 'bg-purple-100 text-purple-800', 'In Transit': 'bg-indigo-100 text-indigo-800', 'Completed': 'bg-green-100 text-green-800', 'Cancelled': 'bg-red-100 text-red-800', }; return <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${classes[status] || 'bg-gray-100 text-gray-800'}`}>{status}</span>; };
 
