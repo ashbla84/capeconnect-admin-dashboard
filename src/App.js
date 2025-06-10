@@ -180,7 +180,7 @@ const BulkImportView = () => {
     const [groupedData, setGroupedData] = useState(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [message, setMessage] = useState('');
-    const [senderName, setSenderName] = useState('WCED');
+    const [senderName, setSenderName] = useState('Your Company Name');
     const [columnMap, setColumnMap] = useState({
         poNumber: '',
         receiverName: '',
@@ -245,39 +245,54 @@ const BulkImportView = () => {
             const batch = writeBatch(db);
             const ordersCollectionRef = collection(db, `artifacts/${appId}/public/data/orders`);
 
-            Object.entries(groupedData).forEach(([poNumber, items]) => {
+            for (const [poNumber, items] of Object.entries(groupedData)) {
                 const newOrderRef = doc(ordersCollectionRef);
                 const firstItem = items[0];
+
+                if (!firstItem) continue; 
+
                 const fullAddress = firstItem[columnMap.receiverAddress] || '';
                 const addressParts = fullAddress.split(',').map(part => part.trim());
                 const postalCode = addressParts.length > 1 ? addressParts[addressParts.length - 1] : '';
                 const city = addressParts.length > 2 ? addressParts[addressParts.length - 2] : '';
 
                 const description = items.map(item => {
-                    const qty = columnMap.itemQuantity ? item[columnMap.itemQuantity] : '1';
-                    const desc = columnMap.itemDescription ? item[columnMap.itemDescription] : item['Item'] || 'Item';
+                    const qty = item[columnMap.itemQuantity] || '1';
+                    const desc = item[columnMap.itemDescription] || item['Item'] || 'Item';
                     return `${qty}x ${desc}`;
                 }).join('; ');
 
                 const orderData = {
-                    senderName, poNumber,
-                    receiverName: firstItem[columnMap.receiverName] || 'N/A',
+                    senderName: senderName || 'Default Sender',
+                    poNumber: poNumber || '',
+                    receiverName: firstItem[columnMap.receiverName] || '',
                     receiverAddress: fullAddress,
-                    deliveryTown: city || 'N/A',
-                    receiverPostal: postalCode || 'N/A',
-                    receiverContact: columnMap.receiverContact ? firstItem[columnMap.receiverContact] : 'N/A',
-                    packageDescription: description,
-                    status: 'Booked', createdAt: new Date(), pickupTown: 'Warehouse', packageSize: 'multiple', price: 'R0.00'
+                    deliveryTown: city || '',
+                    receiverPostal: postalCode || '',
+                    receiverContact: firstItem[columnMap.receiverContact] || '',
+                    packageDescription: description || '',
+                    status: 'Booked',
+                    createdAt: new Date(),
+                    pickupTown: 'Warehouse',
+                    packageSize: 'multiple',
+                    price: 'R0.00'
                 };
+                
+                for (const key in orderData) {
+                    if (orderData[key] === undefined) {
+                        orderData[key] = ''; 
+                    }
+                }
+
                 batch.set(newOrderRef, orderData);
-            });
+            }
 
             await batch.commit();
             setMessage(`Successfully imported ${Object.keys(groupedData).length} new jobs!`);
             setParsedData([]); setCsvHeaders([]); setGroupedData(null);
         } catch (err) {
             console.error("Error importing jobs:", err);
-            setMessage("An error occurred during the import process.");
+            setMessage(`An error occurred during the import process. Firebase error: ${err.message}`);
         }
         setIsProcessing(false);
     };
@@ -287,8 +302,17 @@ const BulkImportView = () => {
             <h1 className="text-3xl font-bold text-gray-900">Bulk Import Shipments</h1>
             
             <div className="bg-white p-6 rounded-lg shadow space-y-4">
-                <h2 className="text-xl font-bold">Step 1: Upload File</h2>
-                <input type="file" accept=".csv" onChange={handleFileChange} className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                <h2 className="text-xl font-bold">Step 1: Upload File & Set Sender</h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label className="label">Client / Sender Name for this Import</label>
+                        <input type="text" value={senderName} onChange={e => setSenderName(e.target.value)} className="input mt-1" />
+                    </div>
+                    <div>
+                        <label className="label">Upload Shipments CSV File</label>
+                        <input type="file" accept=".csv" onChange={handleFileChange} className="mt-1 block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
+                    </div>
+                </div>
             </div>
 
             {csvHeaders.length > 0 && (
@@ -299,7 +323,7 @@ const BulkImportView = () => {
                         <MappingSelect label="PO Number *" name="poNumber" value={columnMap.poNumber} onChange={handleMapChange} headers={csvHeaders} />
                         <MappingSelect label="Recipient Name *" name="receiverName" value={columnMap.receiverName} onChange={handleMapChange} headers={csvHeaders} />
                         <MappingSelect label="Full Address *" name="receiverAddress" value={columnMap.receiverAddress} onChange={handleMapChange} headers={csvHeaders} />
-                        <MappingSelect label="Contact Phone" name="receiverContact" value={columnMap.receiverContact} onChange={handleMapChange} headers={csvHeaders} />
+                        <MappingSelect label="Contact Phone (Memo)" name="receiverContact" value={columnMap.receiverContact} onChange={handleMapChange} headers={csvHeaders} />
                         <MappingSelect label="Item Description" name="itemDescription" value={columnMap.itemDescription} onChange={handleMapChange} headers={csvHeaders} />
                         <MappingSelect label="Item Quantity" name="itemQuantity" value={columnMap.itemQuantity} onChange={handleMapChange} headers={csvHeaders} />
                     </div>
@@ -321,7 +345,7 @@ const BulkImportView = () => {
                 </div>
             )}
             
-            {message && <div className={`mt-4 p-4 rounded-md ${message.startsWith('Error') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{message}</div>}
+            {message && <div className={`mt-4 p-4 rounded-md ${message.startsWith('Error') || message.includes('error:') ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>{message}</div>}
         </div>
     );
 };
