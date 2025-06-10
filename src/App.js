@@ -197,16 +197,17 @@ const BulkImportView = () => {
         if (lines.length < 2) { setMessage("CSV file is empty or has no data rows."); return; }
 
         const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''));
-        const requiredHeaders = ['Customer', 'Shipping Address', 'Shipping City', 'Shipping Zip', 'Phone', 'Notes'];
+        // UPDATED required headers based on user's file
+        const requiredHeaders = ['Customer', 'Shipping Address', 'Phone']; 
         const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
 
         if (missingHeaders.length > 0) {
-            setMessage(`Error: Missing required columns in CSV: ${missingHeaders.join(', ')}`);
+            setMessage(`Error: Missing required columns in CSV. This tool requires: ${requiredHeaders.join(', ')}`);
             return;
         }
 
         const data = lines.slice(1).map(line => {
-            const values = line.split(',').map(v => v.trim().replace(/"/g, ''));
+            const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(v => v.trim().replace(/"/g, ''));
             let row = {};
             headers.forEach((header, i) => { row[header] = values[i]; });
             return row;
@@ -224,14 +225,22 @@ const BulkImportView = () => {
 
             parsedData.forEach(row => {
                 const newOrderRef = doc(ordersCollectionRef);
+                
+                // Smartly parse address details
+                const fullAddress = row['Shipping Address'] || '';
+                const addressParts = fullAddress.split(',').map(part => part.trim());
+                const postalCode = addressParts.length > 1 ? addressParts[addressParts.length - 1] : '';
+                const city = addressParts.length > 2 ? addressParts[addressParts.length - 2] : '';
+                
                 const orderData = {
                     senderName: senderName, 
                     receiverName: row['Customer'] || 'N/A',
-                    receiverAddress: row['Shipping Address'] || 'N/A',
-                    deliveryTown: row['Shipping City'] || 'N/A',
-                    receiverPostal: row['Shipping Zip'] || 'N/A',
+                    receiverAddress: fullAddress, // Store full address
+                    deliveryTown: city || 'N/A', // Store extracted city
+                    receiverPostal: postalCode || 'N/A', // Store extracted postal code
                     receiverContact: row['Phone'] || 'N/A',
-                    packageDescription: row['Notes'] || '',
+                    // Use 'Description' if it exists, otherwise 'Item'
+                    packageDescription: row['Description'] || row['Item'] || '',
                     status: 'Booked',
                     createdAt: new Date(),
                     pickupTown: 'Cape Town Warehouse', 
@@ -256,7 +265,7 @@ const BulkImportView = () => {
             <h1 className="text-3xl font-bold text-gray-900">Bulk Import Shipments</h1>
             <div className="bg-white p-6 rounded-lg shadow">
                  <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
-                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">Export your shipments from SOS Inventory as a CSV file. Ensure it contains the headers: <code className="font-mono bg-blue-100 p-1 rounded">Customer, Shipping Address, Shipping City, Shipping Zip, Phone, Notes</code>.</p></div></div>
+                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">Export your shipments from SOS Inventory as a CSV file. The file must contain the headers: <code className="font-mono bg-blue-100 p-1 rounded">Customer, Shipping Address, Phone</code>. Other columns like <code className="font-mono bg-blue-100 p-1 rounded">Description</code> will also be used if present.</p></div></div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -277,7 +286,7 @@ const BulkImportView = () => {
                     <div className="overflow-x-auto max-h-64">
                          <table className="min-w-full text-sm">
                             <thead className="bg-gray-50"><tr>{Object.keys(parsedData[0]).map(h => <th key={h} className="th">{h}</th>)}</tr></thead>
-                            <tbody className="divide-y">{parsedData.slice(0, 5).map((row, i) => (<tr key={i}>{Object.values(row).map((val, j) => <td key={j} className="td truncate">{val}</td>)}</tr>))}</tbody>
+                            <tbody className="divide-y">{parsedData.slice(0, 5).map((row, i) => (<tr key={i}>{Object.values(row).map((val, j) => <td key={j} className="td truncate" title={val}>{val}</td>)}</tr>))}</tbody>
                         </table>
                     </div>
                     <div className="mt-6">
@@ -306,7 +315,7 @@ const style = document.createElement('style');
 style.textContent = `
 .loading-screen { @apply flex items-center justify-center min-h-screen; }
 .th { @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider; }
-.td { @apply px-6 py-4 whitespace-nowrap text-sm text-gray-700; }
+.td { @apply px-6 py-4 whitespace-nowrap text-sm; }
 .btn-primary { @apply bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition; }
 .btn-secondary { @apply bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded-lg hover:bg-gray-300 transition; }
 .modal-backdrop { @apply fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4; }
@@ -318,4 +327,3 @@ style.textContent = `
 .section-title { @apply font-bold text-lg mb-2 border-b pb-1; }
 `;
 document.head.appendChild(style);
-
