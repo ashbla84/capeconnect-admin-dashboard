@@ -126,35 +126,35 @@ const OrdersView = () => {
                         </select>
                     </div>
                 </div>
-                <div className="bg-white rounded-lg shadow overflow-hidden">
-                   <div className="divide-y divide-gray-200">
-                        <div className="px-4 py-2 bg-gray-50 hidden md:grid md:grid-cols-5 gap-4">
-                           <p className="th">Shipment / PO</p>
-                           <p className="th">Customer</p>
-                           <p className="th">Destination</p>
-                           <p className="th">Driver</p>
-                           <p className="th">Status</p>
-                        </div>
-                       {filteredOrders.map(order => (
-                           <div key={order.id} className="p-4 grid grid-cols-2 md:grid-cols-5 gap-4 items-center">
-                               <div className="md:col-span-1">
-                                    <p className="font-bold text-gray-900">{order.shipmentNumber || 'N/A'}</p>
-                                    <p className="text-xs text-gray-500">PO: {order.poNumber || 'N/A'}</p>
+                <div className="space-y-4">
+                   {filteredOrders.map(order => (
+                       <div key={order.id} className="bg-white rounded-lg shadow-md border border-gray-200 p-4">
+                           <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-center">
+                               <div className="col-span-1">
+                                   <p className="text-xs text-gray-500">Shipment #</p>
+                                   <p className="font-bold text-gray-900">{order.shipmentNumber || 'N/A'}</p>
                                </div>
-                               <div className="md:col-span-1">
-                                    <p className="text-sm text-gray-800">{order.receiverName}</p>
-                                    <p className="text-xs text-gray-500">{new Date(order.createdAt.seconds * 1000).toLocaleDateString()}</p>
+                               <div className="col-span-1">
+                                   <p className="text-xs text-gray-500">PO Number</p>
+                                   <p className="text-sm text-gray-700">{order.poNumber || 'N/A'}</p>
                                </div>
-                               <p className="text-sm text-gray-700 md:col-span-1">{order.deliveryTown}</p>
-                               <p className="text-sm text-gray-700 md:col-span-1">{order.assignedDriverName || 'Unassigned'}</p>
-                               <div className="flex flex-col md:flex-row items-start md:items-center justify-end gap-2 col-span-2 md:col-span-1 text-right">
+                               <div className="col-span-2">
+                                   <p className="text-xs text-gray-500">Customer</p>
+                                   <p className="font-semibold text-gray-800">{order.receiverName}</p>
+                                   <p className="text-xs text-gray-600 truncate">{order.receiverAddress}</p>
+                               </div>
+                               <div className="col-span-1">
+                                   <p className="text-xs text-gray-500">Driver</p>
+                                   <p className="text-sm font-medium">{order.assignedDriverName || 'Unassigned'}</p>
+                               </div>
+                               <div className="col-span-1 flex flex-col items-end gap-2">
                                     <StatusBadge status={order.status} />
-                                    <button onClick={() => setSelectedOrder(order)} className="text-sm font-medium text-blue-600 hover:text-blue-900 whitespace-nowrap">Manage &rarr;</button>
+                                    <button onClick={() => setSelectedOrder(order)} className="text-sm font-bold text-blue-600 hover:underline">Manage</button>
                                </div>
                            </div>
-                       ))}
-                   </div>
-                </div>
+                       </div>
+                   ))}
+               </div>
             </div>
             {selectedOrder && <OrderDetailsModal order={selectedOrder} onClose={() => setSelectedOrder(null)} onUpdateOrder={handleUpdateOrder} />}
         </div>
@@ -203,21 +203,6 @@ const BulkImportView = () => {
     const [message, setMessage] = useState('');
     const [senderName, setSenderName] = useState('Your Company Name');
     
-    // Hardcoded column map based on the user's SOS Inventory file
-    const columnMap = {
-        shipmentNumber: 'Shipment #',
-        poNumber: 'PO Number',
-        receiverName: 'Customer',
-        receiverContact: 'Memo',
-        itemDescription: 'Description',
-        itemQuantity: 'Qty',
-        addr1: 'Shipping Addr 1',
-        addr2: 'Shipping Addr 2',
-        addr3: 'Shipping Addr 3',
-        addr4: 'Shipping Addr 4',
-        addr5: 'Shipping Addr 5',
-    };
-
     const handleFileChange = (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -240,9 +225,11 @@ const BulkImportView = () => {
             return row;
         });
 
-        const shipmentKey = columnMap.shipmentNumber;
+        // Hardcoded column headers from SOS Inventory file
+        const shipmentKey = 'Shipment #';
+        
         if(!headers.includes(shipmentKey)) {
-            setMessage(`Error: The required column "${shipmentKey}" was not found in your file. Please ensure your CSV has a '${shipmentKey}' column.`);
+            setMessage(`Error: The required column "${shipmentKey}" was not found in your file. Please ensure your SOS Inventory export includes this column.`);
             return;
         }
 
@@ -272,30 +259,28 @@ const BulkImportView = () => {
                 if (!firstItem) continue; 
                 
                 const addressLines = [
-                    firstItem[columnMap.addr1],
-                    firstItem[columnMap.addr2],
-                    firstItem[columnMap.addr3],
-                    firstItem[columnMap.addr4],
-                    firstItem[columnMap.addr5],
-                ].filter(Boolean);
+                    firstItem['Shipping Addr 1'], firstItem['Shipping Addr 2'],
+                    firstItem['Shipping Addr 3'], firstItem['Shipping Addr 4'],
+                    firstItem['Shipping Addr 5'],
+                ].filter(Boolean); // Filter out empty lines
                 
                 const fullAddress = addressLines.join(', ');
-                const city = addressLines[addressLines.length - 2] || '';
+                const city = firstItem['Shipping City'] || addressLines[addressLines.length - 2] || '';
                 
                 const description = items.map(item => {
-                    const qty = item[columnMap.itemQuantity] || '1';
-                    const desc = item[columnMap.itemDescription] || item['Item'] || 'Item';
+                    const qty = item['Qty'] || '1';
+                    const desc = item['Description'] || item['Item'] || 'Item';
                     return `${qty}x ${desc}`;
                 }).join('; ');
 
                 const orderData = {
                     senderName: senderName || 'Default Sender',
                     shipmentNumber: shipmentNumber || '',
-                    poNumber: firstItem[columnMap.poNumber] || '',
-                    receiverName: firstItem[columnMap.receiverName] || '',
+                    poNumber: firstItem['PO Number'] || '',
+                    receiverName: firstItem['Customer'] || '',
                     receiverAddress: fullAddress,
                     deliveryTown: city,
-                    receiverContact: firstItem[columnMap.receiverContact] || '',
+                    receiverContact: firstItem['Memo'] || '',
                     packageDescription: description || '',
                     status: 'Booked',
                     createdAt: new Date(),
@@ -304,10 +289,7 @@ const BulkImportView = () => {
                     price: 'R0.00'
                 };
                 
-                for (const key in orderData) {
-                    if (orderData[key] === undefined) orderData[key] = ''; 
-                }
-
+                for (const key in orderData) { if (orderData[key] === undefined) orderData[key] = ''; }
                 batch.set(newOrderRef, orderData);
             }
 
@@ -326,11 +308,10 @@ const BulkImportView = () => {
             <h1 className="text-3xl font-bold text-gray-900">Bulk Import Shipments</h1>
             
             <div className="bg-white p-6 rounded-lg shadow space-y-4">
-                <h2 className="text-xl font-bold">Import Tool</h2>
+                <h2 className="text-xl font-bold">Automatic SOS Inventory Importer</h2>
                  <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
-                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">This tool automatically groups deliveries by **Shipment #** from your SOS Inventory export file.</p></div></div>
+                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">This tool is now configured to automatically read your SOS Inventory export file and group deliveries by **Shipment #**.</p></div></div>
                 </div>
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
                         <label className="label">Client / Sender Name for this Import</label>
@@ -359,7 +340,6 @@ const BulkImportView = () => {
         </div>
     );
 };
-
 
 // --- Sub-components (Analytics, Modals, etc.) ---
 const AnalyticsDashboard = ({ allOrders }) => { const stats = useMemo(() => { const today = new Date().toDateString(); const todaysOrders = allOrders.filter(o => o.createdAt && new Date(o.createdAt.seconds * 1000).toDateString() === today); const revenueToday = todaysOrders.reduce((acc, order) => acc + (parseFloat(order.price?.replace('R', '')) || 0), 0); const pendingJobs = allOrders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled').length; return { ordersToday: todaysOrders.length, revenueToday: revenueToday.toFixed(2), pendingJobs }; }, [allOrders]); return (<div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"><AnalyticsCard title="Orders Today" value={stats.ordersToday} /><AnalyticsCard title="Revenue Today" value={`R ${stats.revenueToday}`} /><AnalyticsCard title="Pending Jobs" value={stats.pendingJobs} /></div>); };
