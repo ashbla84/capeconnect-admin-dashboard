@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 // Corrected: Firebase SDKs are now imported cleanly
 import { initializeApp } from "firebase/app";
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, onSnapshot, query, doc, updateDoc, addDoc, writeBatch } from 'firebase/firestore';
+import { getFirestore, collection, onSnapshot, query, doc, updateDoc, addDoc, writeBatch, getDocs, deleteDoc } from 'firebase/firestore';
 import { getAnalytics } from "firebase/analytics";
 
 // Your web app's Firebase configuration
@@ -91,6 +91,7 @@ const OrdersView = () => {
     const [error, setError] = useState('');
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [statusFilter, setStatusFilter] = useState('All');
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
     useEffect(() => {
         if (!db) return;
@@ -110,6 +111,17 @@ const OrdersView = () => {
         try { await updateDoc(orderDocRef, updates); setSelectedOrder(prev => ({ ...prev, ...updates }));
         } catch (err) { console.error("Error updating order:", err); }
     };
+
+    const handleDeleteAll = async () => {
+        const ordersCollectionRef = collection(db, `artifacts/${appId}/public/data/orders`);
+        const querySnapshot = await getDocs(ordersCollectionRef);
+        const batch = writeBatch(db);
+        querySnapshot.forEach(doc => {
+            batch.delete(doc.ref);
+        });
+        await batch.commit();
+        setShowDeleteConfirm(false);
+    };
     
     if (isLoading) return <p>Loading orders...</p>;
     if (error) return <p className="text-red-500">{error}</p>;
@@ -120,10 +132,11 @@ const OrdersView = () => {
             <div>
                  <div className="sm:flex sm:items-center sm:justify-between mb-6">
                     <h1 className="text-3xl font-bold text-gray-900">Incoming Deliveries</h1>
-                    <div className="mt-4 sm:mt-0">
+                    <div className="mt-4 sm:mt-0 flex items-center gap-4">
                         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="select">
                             <option>All</option><option>Booked</option><option>Driver Assigned</option><option>Completed</option><option>Cancelled</option>
                         </select>
+                         <button onClick={() => setShowDeleteConfirm(true)} className="bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600 transition text-sm">Delete All</button>
                     </div>
                 </div>
                 <div className="space-y-4">
@@ -141,7 +154,7 @@ const OrdersView = () => {
                                <div className="col-span-2">
                                    <p className="text-xs text-gray-500">Customer</p>
                                    <p className="font-semibold text-gray-800">{order.receiverName}</p>
-                                   <p className="text-xs text-gray-600 truncate">{order.receiverAddress}</p>
+                                   <p className="text-xs text-gray-600 truncate" title={order.receiverAddress}>{order.receiverAddress}</p>
                                </div>
                                <div className="col-span-1">
                                    <p className="text-xs text-gray-500">Driver</p>
@@ -157,6 +170,7 @@ const OrdersView = () => {
                </div>
             </div>
             {selectedOrder && <OrderDetailsModal order={selectedOrder} onClose={() => setSelectedOrder(null)} onUpdateOrder={handleUpdateOrder} />}
+            {showDeleteConfirm && <DeleteConfirmModal onConfirm={handleDeleteAll} onCancel={() => setShowDeleteConfirm(false)} />}
         </div>
     );
 };
@@ -226,18 +240,54 @@ const BulkImportView = () => {
         });
 
         // Hardcoded column headers from SOS Inventory file
-        const shipmentKey = 'Shipment #';
+        const columnMap = {
+            shipmentNumber: 'Shipment #',
+            poNumber: 'PO Number',
+            receiverName: 'Customer',
+            receiverContact: 'Memo',
+            itemDescription: 'Description',
+            itemQuantity: 'Qty',
+            addr1: 'Shipping Addr 1',
+            addr2: 'Shipping Addr 2',
+            addr3: 'Shipping Addr 3',
+            addr4: 'Shipping Addr 4',
+            addr5: 'Shipping Addr 5',
+        };
         
+        const shipmentKey = columnMap.shipmentNumber;
         if(!headers.includes(shipmentKey)) {
-            setMessage(`Error: The required column "${shipmentKey}" was not found in your file. Please ensure your SOS Inventory export includes this column.`);
+            setMessage(`Error: The required column "${shipmentKey}" was not found in your file. Please ensure your SOS Inventory export includes this exact column name.`);
             return;
         }
 
         const grouped = data.reduce((acc, row) => {
             const shipmentId = row[shipmentKey];
             if (!shipmentId) return acc;
-            if (!acc[shipmentId]) acc[shipmentId] = [];
-            acc[shipmentId].push(row);
+            if (!acc[shipmentId]) {
+                 const addressLines = [
+                    row[columnMap.addr1], row[columnMap.addr2],
+                    row[columnMap.addr3], row[columnMap.addr4],
+                    row[columnMap.addr5],
+                ].filter(Boolean);
+                
+                const fullAddress = addressLines.join(', ');
+                const city = row['Shipping City'] || addressLines[addressLines.length - 2] || '';
+
+                acc[shipmentId] = {
+                    shipmentNumber: shipmentId,
+                    poNumber: row[columnMap.poNumber] || '',
+                    receiverName: row[columnMap.receiverName] || '',
+                    receiverAddress: fullAddress,
+                    deliveryTown: city,
+                    receiverContact: row[columnMap.receiverContact] || '',
+                    items: []
+                };
+            }
+            
+            const qty = row[columnMap.itemQuantity] || '1';
+            const desc = row[columnMap.itemDescription] || row['Item'] || 'Item';
+            acc[shipmentId].items.push(`${qty}x ${desc}`);
+
             return acc;
         }, {});
         
@@ -252,36 +302,18 @@ const BulkImportView = () => {
             const batch = writeBatch(db);
             const ordersCollectionRef = collection(db, `artifacts/${appId}/public/data/orders`);
 
-            for (const [shipmentNumber, items] of Object.entries(groupedData)) {
+            for (const shipment of Object.values(groupedData)) {
                 const newOrderRef = doc(ordersCollectionRef);
-                const firstItem = items[0];
-
-                if (!firstItem) continue; 
                 
-                const addressLines = [
-                    firstItem['Shipping Addr 1'], firstItem['Shipping Addr 2'],
-                    firstItem['Shipping Addr 3'], firstItem['Shipping Addr 4'],
-                    firstItem['Shipping Addr 5'],
-                ].filter(Boolean); // Filter out empty lines
-                
-                const fullAddress = addressLines.join(', ');
-                const city = firstItem['Shipping City'] || addressLines[addressLines.length - 2] || '';
-                
-                const description = items.map(item => {
-                    const qty = item['Qty'] || '1';
-                    const desc = item['Description'] || item['Item'] || 'Item';
-                    return `${qty}x ${desc}`;
-                }).join('; ');
-
                 const orderData = {
-                    senderName: senderName || 'Default Sender',
-                    shipmentNumber: shipmentNumber || '',
-                    poNumber: firstItem['PO Number'] || '',
-                    receiverName: firstItem['Customer'] || '',
-                    receiverAddress: fullAddress,
-                    deliveryTown: city,
-                    receiverContact: firstItem['Memo'] || '',
-                    packageDescription: description || '',
+                    senderName,
+                    shipmentNumber: shipment.shipmentNumber,
+                    poNumber: shipment.poNumber,
+                    receiverName: shipment.receiverName,
+                    receiverAddress: shipment.receiverAddress,
+                    deliveryTown: shipment.deliveryTown,
+                    receiverContact: shipment.receiverContact,
+                    packageDescription: shipment.items.join('; '),
                     status: 'Booked',
                     createdAt: new Date(),
                     pickupTown: 'Warehouse',
@@ -310,7 +342,7 @@ const BulkImportView = () => {
             <div className="bg-white p-6 rounded-lg shadow space-y-4">
                 <h2 className="text-xl font-bold">Automatic SOS Inventory Importer</h2>
                  <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
-                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">This tool is now configured to automatically read your SOS Inventory export file and group deliveries by **Shipment #**.</p></div></div>
+                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">This tool automatically reads your SOS Inventory export file and groups deliveries by **Shipment #**.</p></div></div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
@@ -346,6 +378,7 @@ const AnalyticsDashboard = ({ allOrders }) => { const stats = useMemo(() => { co
 const AnalyticsCard = ({ title, value }) => <div className="bg-white p-6 rounded-lg shadow"><h3 className="text-sm font-medium text-gray-500 truncate">{title}</h3><p className="mt-1 text-3xl font-semibold text-gray-900">{value}</p></div>;
 const AddDriverModal = ({ onClose, onAddDriver }) => { const [name, setName] = useState(''); const [contact, setContact] = useState(''); const [vehicleReg, setVehicleReg] = useState(''); const handleSubmit = (e) => { e.preventDefault(); if (!name || !contact || !vehicleReg) return; onAddDriver({ name, contact, vehicleReg }); }; return (<div className="modal-backdrop"><div className="modal-content"><form onSubmit={handleSubmit}><div className="p-6"><h2 className="text-2xl font-bold mb-4">Add New Driver</h2><div className="space-y-4"><input value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="input" required /><input value={contact} onChange={e => setContact(e.target.value)} placeholder="Contact Number" className="input" required /><input value={vehicleReg} onChange={e => setVehicleReg(e.target.value)} placeholder="Vehicle Registration" className="input" required /></div></div><div className="modal-footer"><button type="button" onClick={onClose} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Add Driver</button></div></form></div></div>); }
 const OrderDetailsModal = ({ order, onClose, onUpdateOrder }) => { const [newStatus, setNewStatus] = useState(order.status); const [assignedDriverId, setAssignedDriverId] = useState(order.assignedDriverId || ''); const [drivers, setDrivers] = useState([]); useEffect(() => { if (!db) return; const unsub = onSnapshot(collection(db, `artifacts/${appId}/public/data/drivers`), (snap) => setDrivers(snap.docs.map(d => ({ id: d.id, ...d.data() })))); return unsub; }, []); const handleSave = () => { const driver = drivers.find(d => d.id === assignedDriverId); onUpdateOrder(order.id, { status: newStatus, assignedDriverId: assignedDriverId || null, assignedDriverName: driver ? driver.name : null, }); onClose(); }; return (<div className="modal-backdrop"><div className="modal-content max-w-3xl"><div className="p-6 border-b flex justify-between items-start"><div><h2 className="text-2xl font-bold">Manage Order</h2><p className="text-sm text-gray-500">ID: {order.id}</p></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button></div><div className="p-6 max-h-[60vh] overflow-y-auto grid md:grid-cols-2 gap-x-8 gap-y-6"><div className="md:col-span-2 space-y-4"><h3 className="section-title">Logistics</h3><DetailItem label="Shipment #" value={order.shipmentNumber} /><DetailItem label="PO Number" value={order.poNumber} /><DetailItem label="Instructions" value={order.packageDescription || 'N/A'} /></div><div><h3 className="section-title">Sender</h3><DetailItem label="Name" value={order.senderName} /></div><div><h3 className="section-title">Recipient</h3><DetailItem label="Name" value={order.receiverName} /><DetailItem label="Contact" value={order.receiverContact} /><DetailItem label="Address" value={order.receiverAddress} /></div></div><div className="modal-footer flex-col sm:flex-row"><div className="grid sm:grid-cols-2 gap-4 w-full"><div><label className="label">Assign Driver</label><select value={assignedDriverId} onChange={e => setAssignedDriverId(e.target.value)} className="select"><option value="">Unassigned</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div><div><label className="label">Update Status</label><select value={newStatus} onChange={e => setNewStatus(e.target.value)} className="select">{['Booked', 'Driver Assigned', 'Collected', 'In Transit', 'Completed', 'Cancelled'].map(s => <option key={s} value={s}>{s}</option>)}</select></div></div><div className="flex gap-4 w-full sm:w-auto mt-4 sm:mt-0 self-end"><button onClick={handleSave} className="btn-primary w-full sm:w-auto">Save Changes</button></div></div></div></div>); };
+const DeleteConfirmModal = ({ onConfirm, onCancel }) => (<div className="modal-backdrop"><div className="modal-content max-w-md"><div className="p-6"><h2 className="text-xl font-bold">Are you sure?</h2><p className="text-gray-600 mt-2">This will permanently delete all deliveries. This action cannot be undone.</p></div><div className="modal-footer"><button onClick={onCancel} className="btn-secondary">Cancel</button><button onClick={onConfirm} className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition">Yes, Delete All</button></div></div></div>);
 const DetailItem = ({ label, value }) => <div><p className="text-sm font-medium text-gray-500">{label}</p><p className="text-base text-gray-900">{value}</p></div>;
 const StatusBadge = ({ status }) => { const classes = { 'Booked': 'bg-blue-100 text-blue-800', 'Driver Assigned': 'bg-yellow-100 text-yellow-800', 'Collected': 'bg-purple-100 text-purple-800', 'In Transit': 'bg-indigo-100 text-indigo-800', 'Completed': 'bg-green-100 text-green-800', 'Cancelled': 'bg-red-100 text-red-800', }; return <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${classes[status] || 'bg-gray-100 text-gray-800'}`}>{status}</span>; };
 
