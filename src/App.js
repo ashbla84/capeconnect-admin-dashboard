@@ -119,10 +119,11 @@ const OrdersView = () => {
         setShowDeleteConfirm({show: false, type: null});
         
         const batch = writeBatch(db);
-        if (type === 'all') {
-            const ordersCollectionRef = collection(db, `artifacts/${appId}/public/data/orders`);
-            const querySnapshot = await getDocs(ordersCollectionRef);
-            querySnapshot.forEach(doc => batch.delete(doc.ref));
+        if (type === 'all' && filteredOrders.length > 0) {
+            filteredOrders.forEach(order => {
+                const docRef = doc(db, `artifacts/${appId}/public/data/orders`, order.id);
+                batch.delete(docRef);
+            });
         } else if (type === 'selected' && selectedIds.length > 0) {
             selectedIds.forEach(id => {
                 const docRef = doc(db, `artifacts/${appId}/public/data/orders`, id);
@@ -162,36 +163,40 @@ const OrdersView = () => {
                         <button onClick={() => setShowDeleteConfirm({show: true, type: 'all'})} className="bg-gray-700 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-800 transition text-sm">Delete All</button>
                     </div>
                 </div>
-                <div className="bg-white rounded-lg shadow overflow-hidden">
-                   <div className="divide-y divide-gray-200">
-                        <div className="px-4 py-2 bg-gray-50 grid grid-cols-12 gap-4 items-center">
-                            <div className="col-span-1 flex justify-center"><input type="checkbox" onChange={handleSelectAll} checked={selectedIds.length === filteredOrders.length && filteredOrders.length > 0}/></div>
-                            <p className="th col-span-2">Shipment / PO</p>
-                            <p className="th col-span-4">Customer</p>
-                            <p className="th col-span-2">Driver</p>
-                            <p className="th col-span-3 text-right">Status</p>
-                        </div>
-                       {filteredOrders.map(order => (
-                           <div key={order.id} className="p-4 grid grid-cols-12 gap-4 items-center">
-                               <div className="col-span-1 flex justify-center"><input type="checkbox" checked={selectedIds.includes(order.id)} onChange={() => handleSelectOrder(order.id)} /></div>
-                               <div className="col-span-2">
-                                   <p className="font-bold text-gray-900">{order.shipmentNumber || 'N/A'}</p>
-                                   <p className="text-xs text-gray-500">PO: {order.poNumber || 'N/A'}</p>
-                               </div>
-                               <div className="col-span-4">
-                                   <p className="font-semibold text-gray-800">{order.receiverName}</p>
-                                   <p className="text-xs text-gray-600 truncate" title={order.receiverAddress}>{order.receiverAddress}</p>
-                               </div>
-                               <div className="col-span-2">
-                                   <p className="text-sm font-medium">{order.assignedDriverName || 'Unassigned'}</p>
-                               </div>
-                               <div className="col-span-3 flex items-center justify-end gap-4">
-                                    <StatusBadge status={order.status} />
-                                    <button onClick={() => setSelectedOrder(order)} className="text-sm font-bold text-blue-600 hover:underline">Manage</button>
-                               </div>
-                           </div>
-                       ))}
-                   </div>
+                <div className="bg-white rounded-lg shadow overflow-x-auto">
+                   <table className="min-w-full divide-y divide-gray-200">
+                       <thead className="bg-gray-50">
+                           <tr>
+                               <th className="px-6 py-3 w-12 text-center"><input type="checkbox" onChange={handleSelectAll} checked={selectedIds.length === filteredOrders.length && filteredOrders.length > 0}/></th>
+                               <th className="th">Shipment / PO</th>
+                               <th className="th">Customer & Address</th>
+                               <th className="th">Driver</th>
+                               <th className="th text-right">Status & Actions</th>
+                           </tr>
+                       </thead>
+                       <tbody className="bg-white divide-y divide-gray-200">
+                           {filteredOrders.map(order => (
+                               <tr key={order.id}>
+                                   <td className="px-6 py-4 text-center"><input type="checkbox" checked={selectedIds.includes(order.id)} onChange={() => handleSelectOrder(order.id)} /></td>
+                                   <td className="td">
+                                       <p className="font-bold text-gray-900">{order.shipmentNumber || 'N/A'}</p>
+                                       <p className="text-xs text-gray-500">PO: {order.poNumber || 'N/A'}</p>
+                                   </td>
+                                   <td className="td">
+                                        <p className="font-semibold text-gray-800">{order.receiverName}</p>
+                                        <p className="text-xs text-gray-600" title={order.receiverAddress}>{order.receiverAddress}</p>
+                                   </td>
+                                   <td className="td">{order.assignedDriverName || 'Unassigned'}</td>
+                                   <td className="td text-right">
+                                       <div className="flex justify-end items-center gap-4">
+                                            <StatusBadge status={order.status} />
+                                            <button onClick={() => setSelectedOrder(order)} className="text-sm font-bold text-blue-600 hover:underline">Manage</button>
+                                       </div>
+                                   </td>
+                               </tr>
+                           ))}
+                       </tbody>
+                   </table>
                 </div>
             </div>
             {selectedOrder && <OrderDetailsModal order={selectedOrder} onClose={() => setSelectedOrder(null)} onUpdateOrder={handleUpdateOrder} />}
