@@ -241,7 +241,7 @@ const BulkImportView = () => {
 
         // Hardcoded column headers from SOS Inventory file
         const columnMap = {
-            shipmentNumber: 'Shipment #',
+            shipmentNumber: 'ShipmentNumber', // CORRECTED TO MATCH USER'S FILE
             poNumber: 'PO Number',
             receiverName: 'Customer',
             receiverContact: 'Memo',
@@ -342,7 +342,7 @@ const BulkImportView = () => {
             <div className="bg-white p-6 rounded-lg shadow space-y-4">
                 <h2 className="text-xl font-bold">Automatic SOS Inventory Importer</h2>
                  <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
-                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">This tool automatically reads your SOS Inventory export file and groups deliveries by **Shipment #**.</p></div></div>
+                    <div className="flex"><div className="flex-shrink-0"><svg className="h-5 w-5 text-blue-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" /></svg></div><div className="ml-3"><p className="text-sm text-blue-700">This tool automatically reads your SOS Inventory export file and groups deliveries by **ShipmentNumber**.</p></div></div>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div>
@@ -372,6 +372,7 @@ const BulkImportView = () => {
         </div>
     );
 };
+
 
 // --- Sub-components (Analytics, Modals, etc.) ---
 const AnalyticsDashboard = ({ allOrders }) => { const stats = useMemo(() => { const today = new Date().toDateString(); const todaysOrders = allOrders.filter(o => o.createdAt && new Date(o.createdAt.seconds * 1000).toDateString() === today); const revenueToday = todaysOrders.reduce((acc, order) => acc + (parseFloat(order.price?.replace('R', '')) || 0), 0); const pendingJobs = allOrders.filter(o => o.status !== 'Completed' && o.status !== 'Cancelled').length; return { ordersToday: todaysOrders.length, revenueToday: revenueToday.toFixed(2), pendingJobs }; }, [allOrders]); return (<div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"><AnalyticsCard title="Orders Today" value={stats.ordersToday} /><AnalyticsCard title="Revenue Today" value={`R ${stats.revenueToday}`} /><AnalyticsCard title="Pending Jobs" value={stats.pendingJobs} /></div>); };
