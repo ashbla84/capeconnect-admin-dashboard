@@ -91,7 +91,8 @@ const OrdersView = () => {
     const [error, setError] = useState('');
     const [selectedOrder, setSelectedOrder] = useState(null);
     const [statusFilter, setStatusFilter] = useState('All');
-    const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState({show: false, type: null});
+    const [selectedIds, setSelectedIds] = useState([]);
 
     useEffect(() => {
         if (!db) return;
@@ -105,6 +106,7 @@ const OrdersView = () => {
     }, []);
     
     const filteredOrders = useMemo(() => statusFilter === 'All' ? allOrders : allOrders.filter(o => o.status === statusFilter), [allOrders, statusFilter]);
+    
     const handleUpdateOrder = async (orderId, updates) => {
         if (!db) return;
         const orderDocRef = doc(db, `artifacts/${appId}/public/data/orders`, orderId);
@@ -112,15 +114,35 @@ const OrdersView = () => {
         } catch (err) { console.error("Error updating order:", err); }
     };
 
-    const handleDeleteAll = async () => {
-        const ordersCollectionRef = collection(db, `artifacts/${appId}/public/data/orders`);
-        const querySnapshot = await getDocs(ordersCollectionRef);
+    const handleDelete = async () => {
+        const type = showDeleteConfirm.type;
+        setShowDeleteConfirm({show: false, type: null});
+        
         const batch = writeBatch(db);
-        querySnapshot.forEach(doc => {
-            batch.delete(doc.ref);
-        });
+        if (type === 'all') {
+            const ordersCollectionRef = collection(db, `artifacts/${appId}/public/data/orders`);
+            const querySnapshot = await getDocs(ordersCollectionRef);
+            querySnapshot.forEach(doc => batch.delete(doc.ref));
+        } else if (type === 'selected' && selectedIds.length > 0) {
+            selectedIds.forEach(id => {
+                const docRef = doc(db, `artifacts/${appId}/public/data/orders`, id);
+                batch.delete(docRef);
+            });
+        }
         await batch.commit();
-        setShowDeleteConfirm(false);
+        setSelectedIds([]);
+    };
+
+    const handleSelectOrder = (id) => {
+        setSelectedIds(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+    };
+
+    const handleSelectAll = (e) => {
+        if (e.target.checked) {
+            setSelectedIds(filteredOrders.map(o => o.id));
+        } else {
+            setSelectedIds([]);
+        }
     };
     
     if (isLoading) return <p>Loading orders...</p>;
@@ -136,41 +158,44 @@ const OrdersView = () => {
                         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="select">
                             <option>All</option><option>Booked</option><option>Driver Assigned</option><option>Completed</option><option>Cancelled</option>
                         </select>
-                         <button onClick={() => setShowDeleteConfirm(true)} className="bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600 transition text-sm">Delete All</button>
+                        {selectedIds.length > 0 && <button onClick={() => setShowDeleteConfirm({show: true, type: 'selected'})} className="bg-red-500 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-600 transition text-sm">Delete Selected ({selectedIds.length})</button>}
+                        <button onClick={() => setShowDeleteConfirm({show: true, type: 'all'})} className="bg-gray-700 text-white font-bold py-2 px-4 rounded-lg hover:bg-gray-800 transition text-sm">Delete All</button>
                     </div>
                 </div>
-                <div className="space-y-4">
-                   {filteredOrders.map(order => (
-                       <div key={order.id} className="bg-white rounded-lg shadow-md border border-gray-200 p-4">
-                           <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-center">
-                               <div className="col-span-1">
-                                   <p className="text-xs text-gray-500">Shipment #</p>
-                                   <p className="font-bold text-gray-900">{order.shipmentNumber || 'N/A'}</p>
-                               </div>
-                               <div className="col-span-1">
-                                   <p className="text-xs text-gray-500">PO Number</p>
-                                   <p className="text-sm text-gray-700">{order.poNumber || 'N/A'}</p>
-                               </div>
+                <div className="bg-white rounded-lg shadow overflow-hidden">
+                   <div className="divide-y divide-gray-200">
+                        <div className="px-4 py-2 bg-gray-50 grid grid-cols-12 gap-4 items-center">
+                            <div className="col-span-1 flex justify-center"><input type="checkbox" onChange={handleSelectAll} checked={selectedIds.length === filteredOrders.length && filteredOrders.length > 0}/></div>
+                            <p className="th col-span-2">Shipment / PO</p>
+                            <p className="th col-span-4">Customer</p>
+                            <p className="th col-span-2">Driver</p>
+                            <p className="th col-span-3 text-right">Status</p>
+                        </div>
+                       {filteredOrders.map(order => (
+                           <div key={order.id} className="p-4 grid grid-cols-12 gap-4 items-center">
+                               <div className="col-span-1 flex justify-center"><input type="checkbox" checked={selectedIds.includes(order.id)} onChange={() => handleSelectOrder(order.id)} /></div>
                                <div className="col-span-2">
-                                   <p className="text-xs text-gray-500">Customer</p>
+                                   <p className="font-bold text-gray-900">{order.shipmentNumber || 'N/A'}</p>
+                                   <p className="text-xs text-gray-500">PO: {order.poNumber || 'N/A'}</p>
+                               </div>
+                               <div className="col-span-4">
                                    <p className="font-semibold text-gray-800">{order.receiverName}</p>
                                    <p className="text-xs text-gray-600 truncate" title={order.receiverAddress}>{order.receiverAddress}</p>
                                </div>
-                               <div className="col-span-1">
-                                   <p className="text-xs text-gray-500">Driver</p>
+                               <div className="col-span-2">
                                    <p className="text-sm font-medium">{order.assignedDriverName || 'Unassigned'}</p>
                                </div>
-                               <div className="col-span-1 flex flex-col items-end gap-2">
+                               <div className="col-span-3 flex items-center justify-end gap-4">
                                     <StatusBadge status={order.status} />
                                     <button onClick={() => setSelectedOrder(order)} className="text-sm font-bold text-blue-600 hover:underline">Manage</button>
                                </div>
                            </div>
-                       </div>
-                   ))}
-               </div>
+                       ))}
+                   </div>
+                </div>
             </div>
             {selectedOrder && <OrderDetailsModal order={selectedOrder} onClose={() => setSelectedOrder(null)} onUpdateOrder={handleUpdateOrder} />}
-            {showDeleteConfirm && <DeleteConfirmModal onConfirm={handleDeleteAll} onCancel={() => setShowDeleteConfirm(false)} />}
+            {showDeleteConfirm.show && <DeleteConfirmModal type={showDeleteConfirm.type} count={selectedIds.length} onConfirm={handleDelete} onCancel={() => setShowDeleteConfirm({show:false, type: null})} />}
         </div>
     );
 };
@@ -239,24 +264,10 @@ const BulkImportView = () => {
             return row;
         });
 
-        // Hardcoded column headers from SOS Inventory file
-        const columnMap = {
-            shipmentNumber: 'ShipmentNumber', // CORRECTED TO MATCH USER'S FILE
-            poNumber: 'PO Number',
-            receiverName: 'Customer',
-            receiverContact: 'Memo',
-            itemDescription: 'Description',
-            itemQuantity: 'Qty',
-            addr1: 'Shipping Addr 1',
-            addr2: 'Shipping Addr 2',
-            addr3: 'Shipping Addr 3',
-            addr4: 'Shipping Addr 4',
-            addr5: 'Shipping Addr 5',
-        };
+        const shipmentKey = "ShipmentNumber";
         
-        const shipmentKey = columnMap.shipmentNumber;
         if(!headers.includes(shipmentKey)) {
-            setMessage(`Error: The required column "${shipmentKey}" was not found in your file. Please ensure your SOS Inventory export includes this exact column name.`);
+            setMessage(`Error: The required column "${shipmentKey}" was not found in your file. Please ensure your export includes this exact column name.`);
             return;
         }
 
@@ -265,9 +276,9 @@ const BulkImportView = () => {
             if (!shipmentId) return acc;
             if (!acc[shipmentId]) {
                  const addressLines = [
-                    row[columnMap.addr1], row[columnMap.addr2],
-                    row[columnMap.addr3], row[columnMap.addr4],
-                    row[columnMap.addr5],
+                    row['Shipping Addr 1'], row['Shipping Addr 2'],
+                    row['Shipping Addr 3'], row['Shipping Addr 4'],
+                    row['Shipping Addr 5'],
                 ].filter(Boolean);
                 
                 const fullAddress = addressLines.join(', ');
@@ -275,17 +286,17 @@ const BulkImportView = () => {
 
                 acc[shipmentId] = {
                     shipmentNumber: shipmentId,
-                    poNumber: row[columnMap.poNumber] || '',
-                    receiverName: row[columnMap.receiverName] || '',
+                    poNumber: row['PO Number'] || '',
+                    receiverName: row['Customer'] || '',
                     receiverAddress: fullAddress,
                     deliveryTown: city,
-                    receiverContact: row[columnMap.receiverContact] || '',
+                    receiverContact: row['Memo'] || '',
                     items: []
                 };
             }
             
-            const qty = row[columnMap.itemQuantity] || '1';
-            const desc = row[columnMap.itemDescription] || row['Item'] || 'Item';
+            const qty = row['Qty'] || '1';
+            const desc = row['Description'] || row['Item'] || 'Item';
             acc[shipmentId].items.push(`${qty}x ${desc}`);
 
             return acc;
@@ -338,7 +349,6 @@ const BulkImportView = () => {
     return (
         <div className="space-y-6">
             <h1 className="text-3xl font-bold text-gray-900">Bulk Import Shipments</h1>
-            
             <div className="bg-white p-6 rounded-lg shadow space-y-4">
                 <h2 className="text-xl font-bold">Automatic SOS Inventory Importer</h2>
                  <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
@@ -379,7 +389,7 @@ const AnalyticsDashboard = ({ allOrders }) => { const stats = useMemo(() => { co
 const AnalyticsCard = ({ title, value }) => <div className="bg-white p-6 rounded-lg shadow"><h3 className="text-sm font-medium text-gray-500 truncate">{title}</h3><p className="mt-1 text-3xl font-semibold text-gray-900">{value}</p></div>;
 const AddDriverModal = ({ onClose, onAddDriver }) => { const [name, setName] = useState(''); const [contact, setContact] = useState(''); const [vehicleReg, setVehicleReg] = useState(''); const handleSubmit = (e) => { e.preventDefault(); if (!name || !contact || !vehicleReg) return; onAddDriver({ name, contact, vehicleReg }); }; return (<div className="modal-backdrop"><div className="modal-content"><form onSubmit={handleSubmit}><div className="p-6"><h2 className="text-2xl font-bold mb-4">Add New Driver</h2><div className="space-y-4"><input value={name} onChange={e => setName(e.target.value)} placeholder="Full Name" className="input" required /><input value={contact} onChange={e => setContact(e.target.value)} placeholder="Contact Number" className="input" required /><input value={vehicleReg} onChange={e => setVehicleReg(e.target.value)} placeholder="Vehicle Registration" className="input" required /></div></div><div className="modal-footer"><button type="button" onClick={onClose} className="btn-secondary">Cancel</button><button type="submit" className="btn-primary">Add Driver</button></div></form></div></div>); }
 const OrderDetailsModal = ({ order, onClose, onUpdateOrder }) => { const [newStatus, setNewStatus] = useState(order.status); const [assignedDriverId, setAssignedDriverId] = useState(order.assignedDriverId || ''); const [drivers, setDrivers] = useState([]); useEffect(() => { if (!db) return; const unsub = onSnapshot(collection(db, `artifacts/${appId}/public/data/drivers`), (snap) => setDrivers(snap.docs.map(d => ({ id: d.id, ...d.data() })))); return unsub; }, []); const handleSave = () => { const driver = drivers.find(d => d.id === assignedDriverId); onUpdateOrder(order.id, { status: newStatus, assignedDriverId: assignedDriverId || null, assignedDriverName: driver ? driver.name : null, }); onClose(); }; return (<div className="modal-backdrop"><div className="modal-content max-w-3xl"><div className="p-6 border-b flex justify-between items-start"><div><h2 className="text-2xl font-bold">Manage Order</h2><p className="text-sm text-gray-500">ID: {order.id}</p></div><button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">&times;</button></div><div className="p-6 max-h-[60vh] overflow-y-auto grid md:grid-cols-2 gap-x-8 gap-y-6"><div className="md:col-span-2 space-y-4"><h3 className="section-title">Logistics</h3><DetailItem label="Shipment #" value={order.shipmentNumber} /><DetailItem label="PO Number" value={order.poNumber} /><DetailItem label="Instructions" value={order.packageDescription || 'N/A'} /></div><div><h3 className="section-title">Sender</h3><DetailItem label="Name" value={order.senderName} /></div><div><h3 className="section-title">Recipient</h3><DetailItem label="Name" value={order.receiverName} /><DetailItem label="Contact" value={order.receiverContact} /><DetailItem label="Address" value={order.receiverAddress} /></div></div><div className="modal-footer flex-col sm:flex-row"><div className="grid sm:grid-cols-2 gap-4 w-full"><div><label className="label">Assign Driver</label><select value={assignedDriverId} onChange={e => setAssignedDriverId(e.target.value)} className="select"><option value="">Unassigned</option>{drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></div><div><label className="label">Update Status</label><select value={newStatus} onChange={e => setNewStatus(e.target.value)} className="select">{['Booked', 'Driver Assigned', 'Collected', 'In Transit', 'Completed', 'Cancelled'].map(s => <option key={s} value={s}>{s}</option>)}</select></div></div><div className="flex gap-4 w-full sm:w-auto mt-4 sm:mt-0 self-end"><button onClick={handleSave} className="btn-primary w-full sm:w-auto">Save Changes</button></div></div></div></div>); };
-const DeleteConfirmModal = ({ onConfirm, onCancel }) => (<div className="modal-backdrop"><div className="modal-content max-w-md"><div className="p-6"><h2 className="text-xl font-bold">Are you sure?</h2><p className="text-gray-600 mt-2">This will permanently delete all deliveries. This action cannot be undone.</p></div><div className="modal-footer"><button onClick={onCancel} className="btn-secondary">Cancel</button><button onClick={onConfirm} className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition">Yes, Delete All</button></div></div></div>);
+const DeleteConfirmModal = ({ type, count, onConfirm, onCancel }) => (<div className="modal-backdrop"><div className="modal-content max-w-md"><div className="p-6"><h2 className="text-xl font-bold">Are you sure?</h2><p className="text-gray-600 mt-2">{type === 'all' ? 'This will permanently delete ALL deliveries.' : `This will permanently delete the ${count} selected deliver${count > 1 ? 'ies' : 'y'}.` } This action cannot be undone.</p></div><div className="modal-footer"><button onClick={onCancel} className="btn-secondary">Cancel</button><button onClick={onConfirm} className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 transition">Yes, Delete</button></div></div></div>);
 const DetailItem = ({ label, value }) => <div><p className="text-sm font-medium text-gray-500">{label}</p><p className="text-base text-gray-900">{value}</p></div>;
 const StatusBadge = ({ status }) => { const classes = { 'Booked': 'bg-blue-100 text-blue-800', 'Driver Assigned': 'bg-yellow-100 text-yellow-800', 'Collected': 'bg-purple-100 text-purple-800', 'In Transit': 'bg-indigo-100 text-indigo-800', 'Completed': 'bg-green-100 text-green-800', 'Cancelled': 'bg-red-100 text-red-800', }; return <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${classes[status] || 'bg-gray-100 text-gray-800'}`}>{status}</span>; };
 
