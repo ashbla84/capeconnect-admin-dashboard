@@ -167,17 +167,17 @@ const OrdersView = () => {
                    <table className="min-w-full divide-y divide-gray-200">
                        <thead className="bg-gray-50">
                            <tr>
-                               <th className="px-6 py-3 w-12 text-center"><input type="checkbox" onChange={handleSelectAll} checked={selectedIds.length === filteredOrders.length && filteredOrders.length > 0}/></th>
-                               <th className="th">Shipment / PO</th>
-                               <th className="th">Customer & Address</th>
-                               <th className="th">Driver</th>
-                               <th className="th text-right">Status & Actions</th>
+                               <th className="px-4 py-3 w-12 text-center"><input type="checkbox" onChange={handleSelectAll} checked={selectedIds.length === filteredOrders.length && filteredOrders.length > 0}/></th>
+                               <th className="th w-1/6">Shipment / PO</th>
+                               <th className="th w-2/6">Customer & Address</th>
+                               <th className="th w-1/6">Driver</th>
+                               <th className="th w-1/6 text-right">Status & Actions</th>
                            </tr>
                        </thead>
                        <tbody className="bg-white divide-y divide-gray-200">
                            {filteredOrders.map(order => (
                                <tr key={order.id}>
-                                   <td className="px-6 py-4 text-center"><input type="checkbox" checked={selectedIds.includes(order.id)} onChange={() => handleSelectOrder(order.id)} /></td>
+                                   <td className="px-4 py-4 text-center"><input type="checkbox" checked={selectedIds.includes(order.id)} onChange={() => handleSelectOrder(order.id)} /></td>
                                    <td className="td">
                                        <p className="font-bold text-gray-900">{order.shipmentNumber || 'N/A'}</p>
                                        <p className="text-xs text-gray-500">PO: {order.poNumber || 'N/A'}</p>
@@ -402,7 +402,7 @@ const style = document.createElement('style');
 style.textContent = `
 .loading-screen { @apply flex items-center justify-center min-h-screen; }
 .th { @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider; }
-.td { @apply px-6 py-4 whitespace-nowrap text-sm; }
+.td { @apply px-6 py-4 align-top text-sm; }
 .btn-primary { @apply bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition; }
 .btn-secondary { @apply bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded-lg hover:bg-gray-300 transition; }
 .modal-backdrop { @apply fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4; }
