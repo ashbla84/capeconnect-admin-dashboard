@@ -272,10 +272,11 @@ const BulkImportView = () => {
             return row;
         });
 
-        const shipmentKey = "ShipmentNumber";
+        // Correctly find the key for shipment number, being flexible
+        const shipmentKey = headers.find(h => h.toLowerCase().replace(/ /g, '') === 'shipmentnumber') || headers.find(h => h === 'Shipment #');
         
-        if(!headers.includes(shipmentKey)) {
-            setMessage(`Error: The required column "${shipmentKey}" was not found in your file. Please ensure your export includes this exact column name.`);
+        if(!shipmentKey) {
+            setMessage(`Error: Could not automatically find "ShipmentNumber" or "Shipment #" column in your file.`);
             return;
         }
 
@@ -283,14 +284,12 @@ const BulkImportView = () => {
             const shipmentId = row[shipmentKey];
             if (!shipmentId) return acc;
             if (!acc[shipmentId]) {
-                 const addressLines = [
-                    row['Shipping Addr 1'], row['Shipping Addr 2'],
-                    row['Shipping Addr 3'], row['Shipping Addr 4'],
-                    row['Shipping Addr 5'],
-                ].filter(Boolean);
+                const addressHeaders = headers.filter(h => h.toLowerCase().startsWith('shipping addr'));
+                const addressLines = addressHeaders.map(h => row[h]).filter(Boolean);
                 
                 const fullAddress = addressLines.join(', ');
-                const city = row['Shipping City'] || addressLines[addressLines.length - 2] || '';
+                const cityHeader = headers.find(h => h.toLowerCase() === 'shipping city');
+                const city = cityHeader ? row[cityHeader] : (addressLines.length > 2 ? addressLines[addressLines.length-2] : '');
 
                 acc[shipmentId] = {
                     shipmentNumber: shipmentId,
