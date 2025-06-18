@@ -119,18 +119,21 @@ const OrdersView = () => {
         setShowDeleteConfirm({show: false, type: null});
         
         const batch = writeBatch(db);
+        let idsToDelete = [];
+
         if (type === 'all' && filteredOrders.length > 0) {
-            filteredOrders.forEach(order => {
-                const docRef = doc(db, `artifacts/${appId}/public/data/orders`, order.id);
-                batch.delete(docRef);
-            });
+            idsToDelete = filteredOrders.map(order => order.id);
         } else if (type === 'selected' && selectedIds.length > 0) {
-            selectedIds.forEach(id => {
+            idsToDelete = selectedIds;
+        }
+
+        if (idsToDelete.length > 0) {
+            idsToDelete.forEach(id => {
                 const docRef = doc(db, `artifacts/${appId}/public/data/orders`, id);
                 batch.delete(docRef);
             });
+            await batch.commit();
         }
-        await batch.commit();
         setSelectedIds([]);
     };
 
