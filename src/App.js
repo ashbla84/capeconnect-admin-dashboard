@@ -405,7 +405,7 @@ const style = document.createElement('style');
 style.textContent = `
 .loading-screen { @apply flex items-center justify-center min-h-screen; }
 .th { @apply px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider; }
-.td { @apply px-6 py-4 align-top text-sm; }
+.td { @apply px-4 py-4 align-top text-sm; }
 .btn-primary { @apply bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 transition; }
 .btn-secondary { @apply bg-gray-200 text-gray-800 font-bold py-2 px-4 rounded-lg hover:bg-gray-300 transition; }
 .modal-backdrop { @apply fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4; }
